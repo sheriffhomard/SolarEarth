@@ -32,6 +32,17 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def init_db() -> None:
+    """Creates tables if they do not exist (useful for SQLite local storage)."""
+    try:
+        from backend.app.database.base import Base
+        import backend.app.database.models  # noqa: F401
+        Base.metadata.create_all(bind=engine)
+        logger.info("SQLite local database tables verified / created successfully.")
+    except Exception as e:
+        logger.warning(f"Error initializing database tables: {e}")
+
+
 def check_db_connection() -> bool:
     """Checks whether the database connection is operational."""
     try:

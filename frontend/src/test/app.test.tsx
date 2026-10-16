@@ -46,9 +46,9 @@ describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration)', () => {
     // Check header
     expect(screen.getByText(/Tracé Horaire du Rayonnement Solaire/i)).toBeInTheDocument();
 
-    // Check station presets
-    expect(screen.getByText('Observatoire de Paris')).toBeInTheDocument();
-    expect(screen.getByText('Carpentras (Provence)')).toBeInTheDocument();
+    // Check station presets (loaded asynchronously from local IndexedDB)
+    expect(await screen.findByText('Observatoire de Paris')).toBeInTheDocument();
+    expect(await screen.findByText(/Carpentras/i)).toBeInTheDocument();
 
     // Check GHI, DNI, DHI toggles
     expect(screen.getByText(/GHI \(Global\)/i)).toBeInTheDocument();

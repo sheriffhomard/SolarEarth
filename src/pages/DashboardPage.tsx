@@ -42,7 +42,7 @@ export const DashboardPage: React.FC = () => {
             </h1>
             <p className="mt-2 text-sm text-slate-400 max-w-2xl leading-relaxed">
               Mesure, calcul et visualisation du rayonnement solaire reçu sur Terre au cours de la
-              journée. Intégration PVGIS (JRC), décomposition physique GHI / DNI / DHI sur 24h, mise en cache et base de données locale SQLite 3.
+              journée. Fonctionnement 100% autonome sur smartphone : moteur solaire embarqué, décomposition GHI / DNI / DHI sur 24h et stockage local IndexedDB & SQLite.
             </p>
           </div>
 
@@ -50,12 +50,12 @@ export const DashboardPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 text-xs font-mono text-slate-400 bg-slate-900/90 border border-slate-800 p-3 rounded-lg">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4 text-emerald-400" />
-              <span>{info?.environment === 'standalone-mobile' ? 'Mode Mobile PWA' : `FastAPI ${info?.version || '0.2.0'}`}</span>
+              <span>Mode Téléphone PWA</span>
             </div>
             <span className="hidden sm:inline text-slate-700" aria-hidden="true">|</span>
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-sky-400" />
-              <span>SQLite 3 (Local / Mobile)</span>
+              <span>IndexedDB & SQLite Local</span>
             </div>
           </div>
         </div>
@@ -245,10 +245,10 @@ export const DashboardPage: React.FC = () => {
         <div className="p-4 bg-slate-900/40 border border-slate-800 rounded-lg">
           <div className="flex items-center gap-2 text-xs font-mono uppercase text-emerald-400 mb-2">
             <CheckCircle2 className="w-4 h-4" />
-            Infrastructure V0.2
+            Architecture 100% Mobile
           </div>
           <p className="text-xs text-slate-300 leading-relaxed">
-            Intégration PVGIS opérationnelle avec mise en cache HTTP et politique de quotas respectée. Base de données locale SQLite 3 prête.
+            Fonctionne entièrement sur le téléphone (PWA) : stockage sur l'appareil (IndexedDB), moteur de calcul astronomique embarqué, zéro Docker, zéro cloud.
           </p>
         </div>
       </section>

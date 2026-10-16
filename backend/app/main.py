@@ -22,6 +22,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan event handler for startup and shutdown."""
     setup_logging(level=settings.LOG_LEVEL)
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION} ({settings.APP_ENV})")
+    try:
+        from backend.app.database.session import init_db
+        init_db()
+    except Exception as e:
+        logger.warning(f"Could not auto-initialize tables: {e}")
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 

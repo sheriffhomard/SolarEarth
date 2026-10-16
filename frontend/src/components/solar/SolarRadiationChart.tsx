@@ -3,35 +3,33 @@ import {
   Sun,
   MapPin,
   Calendar,
-  Layers,
-  Database,
   Crosshair,
   RefreshCw,
   Info,
+  BookmarkCheck,
+  PlusCircle,
+  Database,
+  Check,
 } from 'lucide-react';
 import { HourlyRadiationResponse } from '../../types';
 import { fetchHourlyRadiation } from '../../services/api';
-
-interface PresetStation {
-  name: string;
-  lat: number;
-  lon: number;
-  country: string;
-}
-
-const PRESET_STATIONS: PresetStation[] = [
-  { name: 'Observatoire de Paris', lat: 48.836, lon: 2.336, country: 'France' },
-  { name: 'Carpentras (Provence)', lat: 44.053, lon: 5.048, country: 'France' },
-  { name: 'Plataforma Solar Almería', lat: 37.091, lon: -2.358, country: 'Espagne' },
-  { name: 'Royal Observatory Greenwich', lat: 51.477, lon: 0.0, country: 'Royaume-Uni' },
-  { name: 'Mauna Loa Observatory', lat: 19.536, lon: -155.576, country: 'États-Unis' },
-];
+import { mobileDatabase, MobileLocation } from '../../services/indexedDbService';
 
 export const SolarRadiationChart: React.FC = () => {
-  const [selectedStation, setSelectedStation] = useState<PresetStation>(PRESET_STATIONS[0]);
-  const [customLat, setCustomLat] = useState<string>(PRESET_STATIONS[0].lat.toString());
-  const [customLon, setCustomLon] = useState<string>(PRESET_STATIONS[0].lon.toString());
+  const [stations, setStations] = useState<MobileLocation[]>([]);
+  const [selectedStation, setSelectedStation] = useState<MobileLocation | null>(null);
+
+  const [customLat, setCustomLat] = useState<string>('48.836');
+  const [customLon, setCustomLon] = useState<string>('2.336');
   const [isCustomMode, setIsCustomMode] = useState<boolean>(false);
+
+  // New station modal state
+  const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [newStationName, setNewStationName] = useState<string>('');
+  const [newStationCountry, setNewStationCountry] = useState<string>('');
+
+  // Save history state
+  const [savedSuccess, setSavedSuccess] = useState<boolean>(false);
 
   // Today's date by default (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>(
@@ -47,6 +45,18 @@ export const SolarRadiationChart: React.FC = () => {
   const [showDni, setShowDni] = useState<boolean>(true);
   const [showDhi, setShowDhi] = useState<boolean>(true);
 
+  // Load stations from IndexedDB on phone mount
+  useEffect(() => {
+    mobileDatabase.getLocations().then((loaded) => {
+      setStations(loaded);
+      if (loaded.length > 0 && !selectedStation) {
+        setSelectedStation(loaded[0]);
+        setCustomLat(loaded[0].latitude.toString());
+        setCustomLon(loaded[0].longitude.toString());
+      }
+    });
+  }, []);
+
   // Load radiation series
   const loadData = async (lat: number, lon: number, dateStr: string, name?: string) => {
     setLoading(true);
@@ -59,17 +69,18 @@ export const SolarRadiationChart: React.FC = () => {
   };
 
   useEffect(() => {
-    const lat = isCustomMode ? parseFloat(customLat) || 48.836 : selectedStation.lat;
-    const lon = isCustomMode ? parseFloat(customLon) || 2.336 : selectedStation.lon;
-    const name = isCustomMode ? 'Coordonnées manuelles' : selectedStation.name;
+    if (!selectedStation && !isCustomMode) return;
+    const lat = isCustomMode ? parseFloat(customLat) || 48.836 : selectedStation?.latitude || 48.836;
+    const lon = isCustomMode ? parseFloat(customLon) || 2.336 : selectedStation?.longitude || 2.336;
+    const name = isCustomMode ? 'Coordonnées manuelles' : selectedStation?.name;
     loadData(lat, lon, selectedDate, name);
   }, [selectedStation, isCustomMode, selectedDate]);
 
-  const handleStationChange = (station: PresetStation) => {
+  const handleStationChange = (station: MobileLocation) => {
     setIsCustomMode(false);
     setSelectedStation(station);
-    setCustomLat(station.lat.toString());
-    setCustomLon(station.lon.toString());
+    setCustomLat(station.latitude.toString());
+    setCustomLon(station.longitude.toString());
   };
 
   const handleApplyCustom = () => {
@@ -90,13 +101,53 @@ export const SolarRadiationChart: React.FC = () => {
           setCustomLat(lat.toString());
           setCustomLon(lon.toString());
           setIsCustomMode(true);
-          loadData(lat, lon, selectedDate, 'Position locale');
+          loadData(lat, lon, selectedDate, 'Position locale mobile');
         },
         () => {
-          alert('Impossible d’accéder à la géolocalisation de votre appareil.');
+          alert('Impossible d’accéder au capteur GPS de votre appareil.');
         }
       );
     }
+  };
+
+  const handleSaveToLocalDB = async () => {
+    if (!radiationData) return;
+    await mobileDatabase.saveRadiationRecord({
+      location_name: radiationData.location_name || `${radiationData.latitude}°, ${radiationData.longitude}°`,
+      latitude: radiationData.latitude,
+      longitude: radiationData.longitude,
+      date: radiationData.date,
+      daily_irradiation_kwh: radiationData.daily_irradiation_kwh,
+      peak_ghi: radiationData.peak_ghi,
+      peak_dni: radiationData.peak_dni,
+      sunshine_hours: radiationData.sunshine_hours,
+      source: radiationData.source,
+    });
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
+  };
+
+  const handleSaveNewStation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const lat = parseFloat(customLat);
+    const lon = parseFloat(customLon);
+    if (!newStationName.trim() || isNaN(lat) || isNaN(lon)) return;
+
+    const created = await mobileDatabase.addLocation({
+      name: newStationName.trim(),
+      latitude: lat,
+      longitude: lon,
+      country: newStationCountry.trim() || 'Locale',
+      timezone: 'UTC',
+    });
+
+    const updated = await mobileDatabase.getLocations();
+    setStations(updated);
+    setSelectedStation(created);
+    setIsCustomMode(false);
+    setShowAddModal(false);
+    setNewStationName('');
+    setNewStationCountry('');
   };
 
   // SVG dimensions & scale math
@@ -118,11 +169,9 @@ export const SolarRadiationChart: React.FC = () => {
     return Math.max(800, Math.ceil(maxVal / 100) * 100);
   }, [radiationData]);
 
-  // Points to SVG coordinates
   const getX = (hourIndex: number) => paddingLeft + (hourIndex / 23) * chartW;
   const getY = (val: number) => paddingTop + chartH - (Math.max(0, val) / maxIrradiance) * chartH;
 
-  // Path generators
   const ghiPath = useMemo(() => {
     if (!radiationData) return '';
     return radiationData.hourly.reduce((acc, p, i) => {
@@ -159,10 +208,8 @@ export const SolarRadiationChart: React.FC = () => {
     }, '');
   }, [radiationData, maxIrradiance]);
 
-  // Current hovered data point
   const hoveredPoint = hoverIndex !== null && radiationData?.hourly ? radiationData.hourly[hoverIndex] : null;
 
-  // Max elevation
   const maxElevation = useMemo(() => {
     if (!radiationData) return 0;
     return Math.max(...radiationData.hourly.map((p) => p.solar_elevation), 0);
@@ -175,25 +222,25 @@ export const SolarRadiationChart: React.FC = () => {
         <div>
           <div className="flex items-center gap-2 text-xs font-mono text-amber-400 mb-1">
             <Sun className="w-3.5 h-3.5" />
-            <span>MODULE PVGIS JRC · VERSION V0.2 ACTIVE</span>
+            <span>MOTEUR SOLAIRE LOCAL · SUR TÉLÉPHONE (INDEXEDDB)</span>
           </div>
           <h2 className="text-xl font-bold text-slate-100 tracking-tight">
             Tracé Horaire du Rayonnement Solaire (24h)
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Décomposition physique en composantes Directe (DNI), Diffuse (DHI) et Globale (GHI)
+            Calcul autonome direct sur smartphone : composantes Directe (DNI), Diffuse (DHI) et Globale (GHI)
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            PVGIS Actif
+            <Database className="w-3 h-3 text-emerald-400" />
+            Base Locale IndexedDB
           </span>
           <button
             onClick={() => {
-              const lat = isCustomMode ? parseFloat(customLat) || 48.836 : selectedStation.lat;
-              const lon = isCustomMode ? parseFloat(customLon) || 2.336 : selectedStation.lon;
+              const lat = isCustomMode ? parseFloat(customLat) || 48.836 : selectedStation?.latitude || 48.836;
+              const lon = isCustomMode ? parseFloat(customLon) || 2.336 : selectedStation?.longitude || 2.336;
               loadData(lat, lon, selectedDate);
             }}
             disabled={loading}
@@ -205,19 +252,19 @@ export const SolarRadiationChart: React.FC = () => {
         </div>
       </div>
 
-      {/* Control Bar: Location Presets, Coordinates, Date */}
+      {/* Control Bar: Location Presets from local DB, Coordinates, Date */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-        {/* Preset stations */}
+        {/* Preset stations from IndexedDB */}
         <div className="lg:col-span-7 flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-mono text-slate-400 mr-1 flex items-center gap-1">
             <MapPin className="w-3.5 h-3.5 text-amber-400" />
             Station :
           </span>
-          {PRESET_STATIONS.map((station) => {
-            const isSelected = !isCustomMode && selectedStation.name === station.name;
+          {stations.map((station) => {
+            const isSelected = !isCustomMode && selectedStation?.id === station.id;
             return (
               <button
-                key={station.name}
+                key={station.id}
                 onClick={() => handleStationChange(station)}
                 className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
                   isSelected
@@ -269,7 +316,7 @@ export const SolarRadiationChart: React.FC = () => {
         </div>
       </div>
 
-      {/* Manual coordinates bar */}
+      {/* Manual coordinates bar with Save Station and GPS */}
       <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-800/60 text-xs font-mono text-slate-400">
         <span className="text-[11px] text-slate-500 uppercase tracking-wider">Coordonnées GPS :</span>
         <div className="flex items-center gap-1">
@@ -305,9 +352,75 @@ export const SolarRadiationChart: React.FC = () => {
           className="px-2.5 py-0.5 text-xs text-amber-400 hover:text-amber-300 bg-amber-950/40 hover:bg-amber-950/80 border border-amber-800/40 rounded transition-colors flex items-center gap-1"
         >
           <Crosshair className="w-3 h-3" />
-          Ma position
+          Mon GPS
+        </button>
+
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="ml-auto px-2.5 py-0.5 text-xs text-sky-400 hover:text-sky-300 bg-sky-950/40 hover:bg-sky-950/80 border border-sky-800/40 rounded transition-colors flex items-center gap-1"
+        >
+          <PlusCircle className="w-3 h-3" />
+          Enregistrer station
+        </button>
+
+        <button
+          onClick={handleSaveToLocalDB}
+          disabled={!radiationData || savedSuccess}
+          className="px-2.5 py-0.5 text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-950/80 border border-emerald-800/40 rounded transition-colors flex items-center gap-1"
+        >
+          {savedSuccess ? (
+            <>
+              <Check className="w-3 h-3 text-emerald-400" />
+              Enregistré !
+            </>
+          ) : (
+            <>
+              <BookmarkCheck className="w-3 h-3" />
+              Sauvegarder calcul
+            </>
+          )}
         </button>
       </div>
+
+      {/* Modal to add custom station to phone's IndexedDB */}
+      {showAddModal && (
+        <div className="p-4 bg-slate-950 border border-slate-700 rounded-lg space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-mono font-semibold text-slate-200">
+              Enregistrer cette station dans la base locale IndexedDB
+            </span>
+            <button
+              onClick={() => setShowAddModal(false)}
+              className="text-slate-400 hover:text-slate-200 text-xs"
+            >
+              Annuler
+            </button>
+          </div>
+          <form onSubmit={handleSaveNewStation} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              type="text"
+              required
+              placeholder="Nom de la station (ex: Ma Maison, Toit solaire)"
+              value={newStationName}
+              onChange={(e) => setNewStationName(e.target.value)}
+              className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none focus:border-amber-500"
+            />
+            <input
+              type="text"
+              placeholder="Pays / Région (ex: France)"
+              value={newStationCountry}
+              onChange={(e) => setNewStationCountry(e.target.value)}
+              className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200 focus:outline-none focus:border-amber-500"
+            />
+            <button
+              type="submit"
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-semibold rounded text-xs transition-colors"
+            >
+              Confirmer l'ajout ({customLat}°, {customLon}°)
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* KPI Ribbon: High-precision metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
@@ -393,7 +506,7 @@ export const SolarRadiationChart: React.FC = () => {
           </div>
 
           <div className="text-[11px] text-slate-500">
-            Unités physiques : <strong>W/m²</strong> (ordonnée) · Heures UTC (abscisse)
+            Unités : <strong>W/m²</strong> · Heures UTC
           </div>
         </div>
 
@@ -620,16 +733,16 @@ export const SolarRadiationChart: React.FC = () => {
         <div className="flex items-center gap-2">
           <Info className="w-3.5 h-3.5 text-slate-500" />
           <span>
-            Source : <strong className="text-slate-300 font-normal">{radiationData?.source === 'pvgis_jrc' ? 'API PVGIS v5.3 (Commission Européenne JRC)' : 'Modèle Ciel Clair PVGIS / Bird'}</strong>
+            Stockage : <strong className="text-slate-300 font-normal">IndexedDB sur votre téléphone (100% hors-ligne)</strong>
           </span>
           <span className="text-slate-700">·</span>
           <span>
-            Cache HTTP : <strong className="text-slate-300 font-normal">{radiationData?.cached ? 'Actif (Local)' : 'Calculé'}</strong>
+            Calcul : <strong className="text-slate-300 font-normal">Moteur astronomique embarqué</strong>
           </span>
         </div>
 
         <div className="text-slate-500">
-          Formule fondamentale : GHI = DNI · sin(hauteur solaire) + DHI
+          GHI = DNI · sin(hauteur solaire) + DHI
         </div>
       </div>
     </div>

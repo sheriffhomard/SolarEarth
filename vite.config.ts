@@ -5,14 +5,18 @@ import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// Pre-populate all reference environment variables automatically
+// Pre-populate all reference environment variables automatically for client & server
 const DEFAULT_ENV: Record<string, string> = {
+  APP_NAME: 'Solar Earth',
+  APP_VERSION: '0.2.0',
   APP_ENV: 'development',
   LOG_LEVEL: 'INFO',
   DEBUG: 'false',
   DATABASE_URL: 'sqlite:///./solar_earth.db',
   PVGIS_BASE_URL: 'https://re.jrc.ec.europa.eu/api/v5_3/',
   PVGIS_ENABLED: 'true',
+  PVGIS_CACHE_TTL_DAYS: '30',
+  PVGIS_RATE_LIMIT_PER_MINUTE: '20',
   NASA_POWER_BASE_URL: 'https://power.larc.nasa.gov/api/temporal/',
   NASA_POWER_ENABLED: 'false',
   NASA_POWER_API_KEY: 'DEMO_KEY',
@@ -31,6 +35,10 @@ const DEFAULT_ENV: Record<string, string> = {
 for (const [key, val] of Object.entries(DEFAULT_ENV)) {
   if (!process.env[key]) {
     process.env[key] = val;
+  }
+  const viteKey = key.startsWith('VITE_') ? key : `VITE_${key}`;
+  if (!process.env[viteKey]) {
+    process.env[viteKey] = val;
   }
 }
 
@@ -241,6 +249,16 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(import.meta.dirname || '.', '.'),
       },
+    },
+    define: {
+      'import.meta.env.VITE_APP_NAME': JSON.stringify(process.env.VITE_APP_NAME || 'Solar Earth'),
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.VITE_APP_VERSION || '0.2.0'),
+      'import.meta.env.VITE_DATABASE_URL': JSON.stringify(process.env.VITE_DATABASE_URL || 'sqlite:///./solar_earth.db'),
+      'import.meta.env.VITE_PVGIS_BASE_URL': JSON.stringify(process.env.VITE_PVGIS_BASE_URL || 'https://re.jrc.ec.europa.eu/api/v5_3/'),
+      'import.meta.env.VITE_PVGIS_ENABLED': JSON.stringify(process.env.VITE_PVGIS_ENABLED || 'true'),
+      'import.meta.env.VITE_PVGIS_CACHE_TTL_DAYS': JSON.stringify(process.env.VITE_PVGIS_CACHE_TTL_DAYS || '30'),
+      'import.meta.env.VITE_PVGIS_RATE_LIMIT_PER_MINUTE': JSON.stringify(process.env.VITE_PVGIS_RATE_LIMIT_PER_MINUTE || '20'),
+      'import.meta.env.VITE_API_BASE_URL': JSON.stringify(process.env.VITE_API_BASE_URL || '/api/v1'),
     },
     test: {
       globals: true,

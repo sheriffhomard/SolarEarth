@@ -143,11 +143,35 @@ class PVGISProvider(SolarDataProvider):
                     data = response.json()
                     hourly_entries = data.get("outputs", {}).get("hourly", [])
                     raw_points = self._extract_matching_day(hourly_entries, target_date, date_str)
-                    data_source = "pvgis_jrc"
-                else:
-                    self.logger.warning(
-                        f"PVGIS seriescalc returned HTTP {response.status_code}: {response.text[:120]}"
+                    if raw_points:
+                        data_source = "pvgis_jrc_seriescalc"
+
+                # If seriescalc didn't return complete data, try /hourlyradiation endpoint
+                if not raw_points:
+                    self.logger.info(
+                        f"Trying PVGIS hourlyradiation endpoint for ({norm_lat}, {norm_lon}), year {query_year}"
                     )
+                    hr_response = await client.get(
+                        "hourlyradiation",
+                        params={
+                            "lat": norm_lat,
+                            "lon": norm_lon,
+                            "startyear": query_year,
+                            "endyear": query_year,
+                            "outputformat": "json",
+                            "components": 1,
+                        },
+                    )
+                    if hr_response.status_code == 200:
+                        hr_data = hr_response.json()
+                        hourly_entries = hr_data.get("outputs", {}).get("hourly", [])
+                        raw_points = self._extract_matching_day(hourly_entries, target_date, date_str)
+                        if raw_points:
+                            data_source = "pvgis_jrc_hourlyradiation"
+                    else:
+                        self.logger.warning(
+                            f"PVGIS hourlyradiation returned HTTP {hr_response.status_code}: {hr_response.text[:120]}"
+                        )
         except Exception as exc:
             self.logger.warning(f"PVGIS external request failed or timed out: {exc}. Using clear-sky model.")
 

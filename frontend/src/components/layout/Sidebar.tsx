@@ -48,22 +48,22 @@ export const Sidebar: React.FC = () => {
       {/* System Technical Foundation block */}
       <div className="mt-auto pt-6 border-t border-slate-800/80">
         <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-3">
-          Architecture V0.1
+          Architecture Mobile PWA
         </div>
         <div className="space-y-2 text-xs font-mono text-slate-300">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-slate-400">
-              <Database className="w-3.5 h-3.5 text-blue-400" />
-              SQLite 3
+              <Database className="w-3.5 h-3.5 text-sky-400" />
+              Stockage
             </span>
-            <span className="text-slate-300">Locale / Mobile</span>
+            <span className="text-slate-300">IndexedDB sur tél.</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-slate-400">
               <Radio className="w-3.5 h-3.5 text-amber-400" />
-              FastAPI
+              Mode
             </span>
-            <span className="text-slate-300">Python 3.12+</span>
+            <span className="text-emerald-400 font-medium">100% Hors-ligne</span>
           </div>
         </div>
 

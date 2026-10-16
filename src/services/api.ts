@@ -14,7 +14,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
       status: 'ok',
       service: 'solar-earth-api',
       version: '0.2.0',
-      database: 'SQLite 3 locale (connectée)',
+      database: 'IndexedDB & SQLite sur smartphone (connectée)',
       timestamp: new Date().toISOString(),
     };
   }
@@ -30,8 +30,8 @@ export async function fetchInfo(): Promise<InfoResponse> {
       name: 'Solar Earth',
       version: '0.2.0',
       environment: 'standalone-mobile',
-      description: 'Solar Earth V0.2 — Mesure et visualisation du rayonnement solaire sur smartphone avec intégration PVGIS et base locale SQLite',
-      database_type: 'SQLite 3 (Embarquée Mobile / Hors-ligne)',
+      description: 'Solar Earth V0.2 — Mesure et visualisation du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
+      database_type: 'IndexedDB & SQLite Local (Sur téléphone)',
       roadmap: [
         'V0.1: Architecture & database foundation (Complété)',
         'V0.2: PVGIS integration (GHI, DNI, DHI, séries 24h & cache) (Actif)',
