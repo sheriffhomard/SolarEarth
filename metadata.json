@@ -1,0 +1,6 @@
+{
+  "name": "Solar Earth",
+  "description": "Mesure, calcul et visualisation du rayonnement solaire reçu sur Terre - V0.2 Intégration PVGIS & Base Locale",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

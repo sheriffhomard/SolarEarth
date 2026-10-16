@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: solar-earth-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-solar_earth}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-solar_earth}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - solar-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: solar-earth-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-solar_earth}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-solar_earth}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PVGIS_BASE_URL: ${PVGIS_BASE_URL:-https://re.jrc.ec.europa.eu/api/v5_3/}
+      PVGIS_ENABLED: ${PVGIS_ENABLED:-false}
+      NASA_POWER_BASE_URL: ${NASA_POWER_BASE_URL:-https://power.larc.nasa.gov/api/temporal/}
+      NASA_POWER_ENABLED: ${NASA_POWER_ENABLED:-false}
+      NOAA_BASE_URL: ${NOAA_BASE_URL:-https://services.swpc.noaa.gov/}
+      NOAA_ENABLED: ${NOAA_ENABLED:-false}
+      EUMETSAT_BASE_URL: ${EUMETSAT_BASE_URL:-https://data.eumetsat.int/}
+      EUMETSAT_ENABLED: ${EUMETSAT_ENABLED:-false}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - solar-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: solar-earth-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - solar-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  solar-net:
+    driver: bridge

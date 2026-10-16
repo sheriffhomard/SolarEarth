@@ -1,0 +1,68 @@
+name: Solar Earth CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  backend:
+    name: Backend (Python / FastAPI / Ruff / Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install system geospatial dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libgeos-dev
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Lint with Ruff
+        run: |
+          ruff check backend
+
+      - name: Run Pytest test suite
+        run: |
+          pytest backend/tests -v --cov=backend/app
+
+  frontend:
+    name: Frontend (React / TypeScript / Vitest / Vite Build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: |
+          npm ci
+
+      - name: Run TypeScript typecheck
+        run: |
+          npm run typecheck
+
+      - name: Run Vitest frontend tests
+        run: |
+          npm run test:run
+
+      - name: Build Vite production distribution
+        run: |
+          npm run build
