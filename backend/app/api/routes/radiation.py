@@ -47,9 +47,22 @@ async def get_hourly_radiation(
         longitude = 2.336
         loc_name = "Observatoire de Paris"
 
-    # Default to current date if omitted
+    # Default to current date if omitted or validate calendar format
     if not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    else:
+        try:
+            parsed_date = datetime.strptime(date, "%Y-%m-%d").date()
+            if parsed_date.year < 1980 or parsed_date.year > 2060:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Date out of supported range (1980-2060)."
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid date format '{date}'. Expected YYYY-MM-DD."
+            )
 
     pvgis_provider = provider_registry.get_provider("pvgis")
     if not pvgis_provider:
@@ -98,6 +111,28 @@ async def get_daily_radiation(
     """
     Returns daily irradiation totals (GHI, DNI, DHI in kWh/m²) over the specified interval.
     """
+    # Validate date intervals
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid date format. Both start_date and end_date must be YYYY-MM-DD."
+        )
+
+    if end_dt < start_dt:
+        raise HTTPException(
+            status_code=422,
+            detail=f"end_date ({end_date}) cannot precede start_date ({start_date})."
+        )
+
+    if (end_dt - start_dt).days > 366:
+        raise HTTPException(
+            status_code=422,
+            detail="Date range exceeds maximum allowed interval of 366 days."
+        )
+
     pvgis_provider = provider_registry.get_provider("pvgis")
     if not pvgis_provider:
         raise HTTPException(status_code=500, detail="PVGIS provider not registered.")

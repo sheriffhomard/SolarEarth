@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # External Solar Providers (PVGIS V0.2 Active)
     PVGIS_BASE_URL: str = "https://re.jrc.ec.europa.eu/api/v5_3/"
     PVGIS_ENABLED: bool = True
+    PVGIS_CACHE_TTL_DAYS: int = 30
+    PVGIS_RATE_LIMIT_PER_MINUTE: int = 20
 
     NASA_POWER_BASE_URL: str = "https://power.larc.nasa.gov/api/temporal/"
     NASA_POWER_ENABLED: bool = False

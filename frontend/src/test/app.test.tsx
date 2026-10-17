@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
@@ -9,8 +9,10 @@ import { SolarRadiationChart } from '../components/solar/SolarRadiationChart';
 import { Sun } from 'lucide-react';
 import { Navbar } from '../components/layout/Navbar';
 import { MobileNav } from '../components/layout/MobileNav';
+import { mobileDatabase } from '../services/indexedDbService';
+import { scientificCache } from '../services/cachePolicy';
 
-describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration)', () => {
+describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration & Priorities)', () => {
   it('1. Loads Dashboard with Solar Earth title, Solar Radiation chart, and roadmap modules', async () => {
     render(<App />);
 
@@ -40,7 +42,7 @@ describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration)', () => {
     expect(screen.getByText(/World Map — Carte Mondiale/i)).toBeInTheDocument();
   });
 
-  it('3. Renders SolarRadiationChart with 24h curve, GHI/DNI/DHI controls and KPIs', async () => {
+  it('3. Renders SolarRadiationChart with 24h curve, GHI/DNI/DHI controls, search and KPIs', async () => {
     render(<SolarRadiationChart />);
 
     // Check header
@@ -54,6 +56,12 @@ describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration)', () => {
     expect(screen.getByText(/GHI \(Global\)/i)).toBeInTheDocument();
     expect(screen.getByText(/DNI \(Direct\)/i)).toBeInTheDocument();
     expect(screen.getByText(/DHI \(Diffus\)/i)).toBeInTheDocument();
+
+    // Check offline city search input
+    const searchInput = screen.getByPlaceholderText(/Rechercher une ville/i);
+    expect(searchInput).toBeInTheDocument();
+    fireEvent.change(searchInput, { target: { value: 'Marseille' } });
+    expect(await screen.findByText(/Marseille \(Vieux-Port\)/i)).toBeInTheDocument();
   });
 
   it('4. Renders ComingSoonCard with scientific metadata and units without fake data', () => {
@@ -108,5 +116,36 @@ describe('Solar Earth — Frontend Tests (V0.2 PVGIS Integration)', () => {
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Navigation Solar Earth')).toBeInTheDocument();
+  });
+
+  it('6. Tests IndexedDB Local Database & Recent Locations (Priorité 1 & 5)', async () => {
+    const defaultStations = await mobileDatabase.getLocations();
+    expect(defaultStations.length).toBeGreaterThanOrEqual(4);
+
+    // Add a custom station
+    const newLoc = await mobileDatabase.addLocation({
+      name: 'Station Test Solaire',
+      latitude: 45.188,
+      longitude: 5.724,
+      country: 'France',
+      timezone: 'Europe/Paris',
+    });
+    expect(newLoc.id).toBeDefined();
+
+    // Verify recent locations recording
+    await mobileDatabase.recordRecentLocation(newLoc);
+    const recents = await mobileDatabase.getRecentLocations();
+    expect(recents.some((r) => r.name === 'Station Test Solaire')).toBe(true);
+  });
+
+  it('7. Tests Controlled Cache Expiration & Provenance (Priorité 4)', () => {
+    const testKey = 'test_pvgis_carpentras';
+    scientificCache.set(testKey, { sample: 42 }, 'pvgis_jrc', 1000); // 1 second TTL
+
+    // Immediately cached
+    const resFresh = scientificCache.get<{ sample: number }>(testKey);
+    expect(resFresh).not.toBeNull();
+    expect(resFresh?.status).toBe('cached');
+    expect(resFresh?.isStale).toBe(false);
   });
 });

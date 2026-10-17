@@ -28,8 +28,9 @@ class HourlyRadiationResponse(BaseModel):
     daily_irradiation_kwh: float = Field(description="Cumulative daily global irradiation in kWh/m²")
     peak_ghi: float = Field(description="Maximum hourly GHI reached in W/m²")
     peak_dni: float = Field(description="Maximum hourly DNI reached in W/m²")
-    sunshine_hours: float = Field(description="Sun hours above WMO direct threshold (120 W/m²)")
+    sunshine_hours: float = Field(default=0.0, description="Sun hours above WMO direct threshold (120 W/m²)")
     cached: bool = Field(default=False)
+    provenance: Optional[dict] = Field(default=None, description="Scientific provenance, source, formulas, and UTC timestamps")
     hourly: List[HourlyRadiationPoint]
 
 

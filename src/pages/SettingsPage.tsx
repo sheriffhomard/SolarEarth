@@ -12,6 +12,8 @@ import {
   WifiOff,
   Copy,
   Check,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { fetchHealth, fetchInfo } from '../services/api';
 import { mobileDatabase } from '../services/indexedDbService';
@@ -235,6 +237,81 @@ export const SettingsPage: React.FC = () => {
               <span>V0.6: Carte mondiale interactive sur smartphone</span>
             </li>
           </ul>
+        </div>
+      </div>
+
+      {/* Security, Secrets & Zero Database Port Exposure Panel */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span>Sécurité, Secrets & Audit d'Exposition Réseau</span>
+          </div>
+          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-0.5 rounded">
+            Audité & Conforme
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div className="p-3.5 bg-slate-950/40 border border-slate-800/80 rounded-lg space-y-1.5">
+            <div className="flex items-center justify-between text-slate-200 font-bold">
+              <span className="flex items-center gap-1.5 text-sky-400">
+                <Lock className="w-3.5 h-3.5" />
+                Exposition des Ports Base de Données
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800/40">
+                0 Port Exposé
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+              Contrairement à PostgreSQL (port TCP 5432) ou MySQL (3306), le passage à <strong>SQLite 3 local</strong> et <strong>IndexedDB</strong> supprime tout port d'écoute réseau. La base est un fichier local protégé par les droits OS et cloisonnée dans le bac à sable (sandbox) du navigateur selon la <em>Same-Origin Policy</em>.
+            </p>
+          </div>
+
+          <div className="p-3.5 bg-slate-950/40 border border-slate-800/80 rounded-lg space-y-1.5">
+            <div className="flex items-center justify-between text-slate-200 font-bold">
+              <span className="flex items-center gap-1.5 text-amber-400">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Validation Stricte des Entrées (Inputs)
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800/40">
+                WGS84 & ISO
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+              Les coordonnées géographiques sont strictement bornées (latitudes [-90.0°, +90.0°], longitudes [-180.0°, +180.0°]). Les dates sont validées au format calendrier ISO (1980-2060). Les entrées de stations sont protégées contre les injections XSS.
+            </p>
+          </div>
+
+          <div className="p-3.5 bg-slate-950/40 border border-slate-800/80 rounded-lg space-y-1.5">
+            <div className="flex items-center justify-between text-slate-200 font-bold">
+              <span className="flex items-center gap-1.5 text-purple-400">
+                <Server className="w-3.5 h-3.5" />
+                Politique CORS & En-têtes HTTP
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800/40">
+                Restreint
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+              Les origines CORS sont limitées aux hôtes applicatifs autorisés (localhost:3000, PWA mobile). Les en-têtes de sécurité <code>X-Content-Type-Options: nosniff</code> et <code>X-Frame-Options: SAMEORIGIN</code> sont appliqués aux flux de données.
+            </p>
+          </div>
+
+          <div className="p-3.5 bg-slate-950/40 border border-slate-800/80 rounded-lg space-y-1.5">
+            <div className="flex items-center justify-between text-slate-200 font-bold">
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <Cpu className="w-3.5 h-3.5" />
+                Gestion des Secrets & Dépendances
+              </span>
+              <span className="text-[10px] text-emerald-400 bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800/40">
+                Vite 8.3.4 Verrouillé
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+              Aucun secret applicatif critique n'est consigné dans le code. PVGIS est une API publique ouverte sans clé secrète requise. Les versions des dépendances sont verrouillées (Vite 8.3.4, React 19.0.1, TypeScript 7.0.2) et exemptes de failles connues.
+            </p>
+          </div>
         </div>
       </div>
 

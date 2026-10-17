@@ -49,6 +49,34 @@ export interface HourlyRadiationPoint {
   quality_flag?: string;
 }
 
+export interface ScientificIndicatorFormula {
+  name: string;
+  symbol: string;
+  formula_text: string;
+  unit: string;
+  reference_standard: string;
+  calculated_value: number | string;
+  calculated_at_utc: string;
+}
+
+export interface ScientificProvenance {
+  source_id: string;
+  source_name: string;
+  source_version: string;
+  data_retrieval_date_utc: string;
+  calculation_date_utc: string;
+  spatial_resolution: string;
+  temporal_resolution: string;
+  solar_constant_w_m2: number;
+  formulas: Record<string, ScientificIndicatorFormula>;
+  quality_assessment: {
+    status: 'measured' | 'satellite_derived' | 'model_clearsky' | 'estimated';
+    missing_values_count: number;
+    outliers_detected: number;
+    closure_equation_verified: boolean;
+  };
+}
+
 export interface HourlyRadiationResponse {
   location_name?: string;
   latitude: number;
@@ -61,5 +89,12 @@ export interface HourlyRadiationResponse {
   peak_dni: number;
   sunshine_hours: number;
   cached?: boolean;
+  cache_status?: 'fresh' | 'cached' | 'stale' | 'fallback_model';
+  cache_timestamp_utc?: string;
+  product_name?: string;
+  product_version?: string;
+  daily_clearness_index_kt?: number;
+  extraterrestrial_daily_kwh_m2?: number;
+  provenance?: ScientificProvenance;
   hourly: HourlyRadiationPoint[];
 }

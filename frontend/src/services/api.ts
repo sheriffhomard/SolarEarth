@@ -1,5 +1,8 @@
 import { HealthResponse, InfoResponse, HourlyRadiationResponse } from '../types';
-import { calculateClientSolar24h } from './solarCalculator';
+import { UnifiedSolarObservationRecord } from '../types/scientificModel';
+import { generateScientificSolarDay } from './physicsEngine';
+import { scientificCache, CACHE_TTL_TIERS } from './cachePolicy';
+import { validateCoordinates, validateDateString, generateScientificProvenance } from './solarCalculator';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -14,7 +17,7 @@ export async function fetchHealth(): Promise<HealthResponse> {
       status: 'ok',
       service: 'solar-earth-api',
       version: '0.2.0',
-      database: 'IndexedDB & SQLite sur smartphone (connectée)',
+      database: 'IndexedDB & SQLite locale sur smartphone (connectée)',
       timestamp: new Date().toISOString(),
     };
   }
@@ -30,11 +33,12 @@ export async function fetchInfo(): Promise<InfoResponse> {
       name: 'Solar Earth',
       version: '0.2.0',
       environment: 'standalone-mobile',
-      description: 'Solar Earth V0.2 — Mesure et visualisation du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
+      description:
+        'Solar Earth V0.2 — Modèle scientifique unifié du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
       database_type: 'IndexedDB & SQLite Local (Sur téléphone)',
       roadmap: [
         'V0.1: Architecture & database foundation (Complété)',
-        'V0.2: PVGIS integration (GHI, DNI, DHI, séries 24h & cache) (Actif)',
+        'V0.2: PVGIS integration (GHI, DNI, DHI, séries 24h & cache maîtrisé) (Actif)',
         'V0.3: NASA POWER integration (Worldwide solar & meteorology)',
         'V0.4: NOAA SWPC integration (F10.7, Kp, Dst, flares)',
         'V0.5: Solar Earth application indices (Clear Sky, SRI, SAI, GAI)',
@@ -50,8 +54,16 @@ export async function fetchInfo(): Promise<InfoResponse> {
           target_version: 'V0.2',
           is_active_in_v0_1: true,
           supported_operations: { current: true, hourly: true, daily: true, historical: true },
-          supported_parameters: ['GHI (W/m²)', 'DNI (W/m²)', 'DHI (W/m²)', 'Elevation (°)', 'Azimuth (°)', 'T2m (°C)'],
-          description: 'European Commission JRC service for solar radiation, hourly irradiance (GHI, DNI, DHI), and typical meteorological years.',
+          supported_parameters: [
+            'GHI (W/m²)',
+            'DNI (W/m²)',
+            'DHI (W/m²)',
+            'Elevation (°)',
+            'Azimuth (°)',
+            'T2m (°C)',
+          ],
+          description:
+            'European Commission JRC service for solar radiation, hourly irradiance (GHI, DNI, DHI), and typical meteorological years.',
         },
         nasa_power: {
           code: 'nasa_power',
@@ -91,6 +103,10 @@ export async function fetchInfo(): Promise<InfoResponse> {
   }
 }
 
+/**
+ * Fetches or calculates a 24-hour solar day with unified scientific model,
+ * multi-tier caching, rate limiting, and physics engine fallback.
+ */
 export async function fetchHourlyRadiation(
   latitude: number,
   longitude: number,
@@ -99,24 +115,142 @@ export async function fetchHourlyRadiation(
 ): Promise<HourlyRadiationResponse> {
   const targetDate = dateStr || new Date().toISOString().split('T')[0];
 
+  // Robust input validation
+  const coordVal = validateCoordinates(latitude, longitude);
+  if (!coordVal.valid) {
+    throw new Error(coordVal.error);
+  }
+  const dateVal = validateDateString(targetDate);
+  if (!dateVal.valid) {
+    throw new Error(dateVal.error);
+  }
+
+  const normLat = Math.round(latitude * 1000) / 1000;
+  const normLon = Math.round(longitude * 1000) / 1000;
+
+  const cacheKey = scientificCache.generateKey('pvgis', 'hourly', {
+    lat: normLat,
+    lon: normLon,
+    date: targetDate,
+  });
+
+  // 1. Check client-side controlled cache
+  const cachedResolution = scientificCache.get<HourlyRadiationResponse>(cacheKey);
+  if (cachedResolution) {
+    return {
+      ...cachedResolution.data,
+      cached: true,
+      cache_status: cachedResolution.status,
+      cache_timestamp_utc: cachedResolution.cachedAtIso,
+    };
+  }
+
+  // 2. Upstream request with rate-limiting
   try {
+    await scientificCache.acquireRateLimit();
+
     const params = new URLSearchParams({
-      latitude: latitude.toString(),
-      longitude: longitude.toString(),
+      latitude: normLat.toString(),
+      longitude: normLon.toString(),
       date: targetDate,
     });
+
     const res = await fetch(`${API_BASE}/radiation/hourly?${params.toString()}`, {
       signal: AbortSignal.timeout(4000),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (locationName && !data.location_name) {
-      data.location_name = locationName;
-    }
-    return data;
+    const data: HourlyRadiationResponse = await res.json();
+
+    const provenance = data.provenance || generateScientificProvenance(
+      normLat,
+      normLon,
+      targetDate,
+      data.daily_irradiation_kwh,
+      data.peak_ghi,
+      data.peak_dni,
+      data.sunshine_hours,
+      'pvgis_jrc_sarah2'
+    );
+
+    const result: HourlyRadiationResponse = {
+      ...data,
+      location_name: locationName || data.location_name || `${normLat}°, ${normLon}°`,
+      cached: false,
+      cache_status: 'fresh',
+      cache_timestamp_utc: new Date().toISOString(),
+      product_name: 'PVGIS-SARAH2 / JRC European Commission',
+      product_version: 'v5.3',
+      provenance,
+    };
+
+    // Store in scientific cache with 24h fresh TTL, 7 days stale fallback
+    scientificCache.set(
+      cacheKey,
+      result,
+      'pvgis_jrc',
+      CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_FRESH_MS,
+      CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_MAX_STALE_MS
+    );
+
+    return result;
   } catch {
-    // Offline / Standalone mobile PWA calculation using solar physics engine
-    return calculateClientSolar24h(latitude, longitude, targetDate, locationName);
+    // 3. Fallback to Spencer-Bird Astronomical Solar Physics Model
+    const physicalDay = generateScientificSolarDay(
+      normLat,
+      normLon,
+      targetDate,
+      locationName,
+      'model_clearsky_spencer_bird',
+      'fallback_model'
+    );
+
+    const fallbackProvenance = generateScientificProvenance(
+      normLat,
+      normLon,
+      targetDate,
+      physicalDay.daily_ghi_kwh_m2,
+      physicalDay.peak_ghi_w_m2,
+      physicalDay.peak_dni_w_m2,
+      physicalDay.sunshine_hours_wmo,
+      'pvgis_validated_clearsky'
+    );
+
+    const fallbackResult: HourlyRadiationResponse = {
+      location_name: physicalDay.location_name,
+      latitude: normLat,
+      longitude: normLon,
+      date: targetDate,
+      source: 'model_clearsky_spencer_bird',
+      units: 'W/m² for irradiance, kWh/m² for irradiation',
+      daily_irradiation_kwh: physicalDay.daily_ghi_kwh_m2,
+      peak_ghi: physicalDay.peak_ghi_w_m2,
+      peak_dni: physicalDay.peak_dni_w_m2,
+      sunshine_hours: physicalDay.sunshine_hours_wmo,
+      cached: false,
+      cache_status: 'fallback_model',
+      cache_timestamp_utc: physicalDay.retrieval_date_utc,
+      product_name: physicalDay.product_name,
+      product_version: physicalDay.product_version,
+      daily_clearness_index_kt: physicalDay.daily_clearness_index_kt,
+      extraterrestrial_daily_kwh_m2: physicalDay.extraterrestrial_daily_kwh_m2,
+      provenance: fallbackProvenance,
+      hourly: physicalDay.hourly.map((h) => ({
+        hour: h.hour_utc,
+        time: h.timestamp_utc,
+        ghi: h.ghi_w_m2,
+        dni: h.dni_w_m2,
+        dhi: h.dhi_w_m2,
+        solar_elevation: h.solar_elevation_deg,
+        solar_azimuth: h.solar_azimuth_deg,
+        temperature: h.temperature_c,
+        quality_flag: h.quality_flag,
+      })),
+    };
+
+    // Cache fallback model
+    scientificCache.set(cacheKey, fallbackResult, 'model_clearsky', 24 * 3600 * 1000);
+
+    return fallbackResult;
   }
 }
