@@ -1,9 +1,40 @@
 /// <reference types="vitest" />
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function isValidCalendarDate(dateStr: string): { valid: boolean; error?: string } {
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return { valid: false, error: 'Format de date invalide. Format attendu : AAAA-MM-JJ.' };
+  }
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  if (year < 1980 || year > 2060) {
+    return { valid: false, error: `L’année ${year} est hors limites astronomiques acceptées [1980, 2060].` };
+  }
+  if (month < 1 || month > 12) {
+    return { valid: false, error: `Le mois ${month} est invalide (doit être entre 01 et 12).` };
+  }
+  const daysInMonths = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maxDays = daysInMonths[month - 1];
+  if (day < 1 || day > maxDays) {
+    if (month === 2 && day === 29 && !isLeapYear(year)) {
+      return { valid: false, error: `L’année ${year} n'est pas bissextile (février ne compte que 28 jours).` };
+    }
+    return { valid: false, error: `Le jour ${day} n'existe pas dans le mois ${month.toString().padStart(2, '0')}/${year} (maximum: ${maxDays} jours).` };
+  }
+  return { valid: true };
+}
 
 // Whitelist of strictly public frontend variables.
 // NO server secrets (database credentials, private keys) are ever exposed to the client bundle.
@@ -46,13 +77,41 @@ function devApiPlugin(): Plugin {
       server.middlewares.use((req, res, next) => {
         if (req.url === '/api/v1/health') {
           res.setHeader('Content-Type', 'application/json');
+          const rootDir = import.meta.dirname || process.cwd();
+          const dbPath = path.resolve(rootDir, 'solar_earth.db');
+          const hasDbFile = fs.existsSync(dbPath);
+          let dbVerified = false;
+          let dbStatusDesc = 'Persistance sur smartphone (IndexedDB & SQLite local)';
+
+          try {
+            if (hasDbFile) {
+              fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+              dbVerified = true;
+              dbStatusDesc = 'Fichier SQLite 3 local vérifié et accessible en lecture/écriture';
+            } else {
+              // Directory writable check for local SQLite creation
+              fs.accessSync(rootDir, fs.constants.W_OK);
+              dbVerified = true;
+              dbStatusDesc = 'Environnement local prêt (IndexedDB sur client & SQLite local disponible)';
+            }
+          } catch {
+            dbVerified = false;
+            dbStatusDesc = 'Permissions restreintes sur le stockage local';
+          }
+
           res.end(
             JSON.stringify({
-              status: 'ok',
+              status: dbVerified ? 'ok' : 'degraded',
               service: 'solar-earth-api',
               version: '0.2.0',
-              database: 'SQLite 3 locale (connectée)',
+              database: dbStatusDesc,
+              database_verified: dbVerified,
               timestamp: new Date().toISOString(),
+              components: {
+                storage_subsystem: hasDbFile ? 'sqlite3_local_file' : 'browser_indexeddb_local',
+                solar_physics_engine: 'Spencer 1971 / Bird & Hulstrom 1981 (Opérationnel)',
+                pvgis_provider: 'available (Mode calcul astronomique et repli hors-ligne actif)',
+              },
             })
           );
           return;
@@ -63,25 +122,25 @@ function devApiPlugin(): Plugin {
           res.end(
             JSON.stringify({
               name: 'Solar Earth',
-              version: '0.1.0',
+              version: '0.2.0',
               environment: 'development',
               description:
-                'Solar Earth V0.1 — Mesure et visualisation du rayonnement solaire sur smartphone avec base locale SQLite',
-              database_type: 'SQLite 3 (Embarquée Mobile / Hors-ligne)',
+                'Solar Earth V0.2 — Modèle scientifique unifié du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
+              database_type: 'IndexedDB & SQLite Local (Sur smartphone, zéro port réseau)',
               roadmap: [
-                'V0.1: Architecture & database foundation (Active)',
-                'V0.2: PVGIS integration (GHI, DNI, DHI)',
-                'V0.3: NASA POWER integration (Worldwide solar & meteorology)',
-                'V0.4: NOAA SWPC integration (F10.7, Kp, Dst, flares)',
-                'V0.5: Solar Earth application indices (Clear Sky, SRI, SAI, GAI)',
-                'V0.6: Interactive global map & time slider',
-                'V0.7: EUMETSAT satellite validation products',
+                'V0.1: Architecture & database foundation (Complété)',
+                'V0.2: PVGIS integration (GHI, DNI, DHI, séries 24h & cache maîtrisé) (Actif)',
+                'V0.3: NASA POWER integration (Worldwide solar & meteorology) (En cours)',
+                'V0.4: NOAA SWPC integration (F10.7, Kp, Dst, flares) (Prévu)',
+                'V0.5: Solar Earth application indices (Clear Sky, SRI, SAI, GAI) (Prévu)',
+                'V0.6: Interactive global map & time slider (Prévu)',
+                'V0.7: EUMETSAT satellite validation products (Prévu)',
               ],
               providers: {
                 pvgis: {
                   code: 'pvgis',
                   name: 'PVGIS (Photovoltaic Geographical Information System)',
-                  state: 'enabled',
+                  state: 'available',
                   base_url: 'https://re.jrc.ec.europa.eu/api/v5_3/',
                   target_version: 'V0.2',
                   is_active_in_v0_1: true,
@@ -96,14 +155,16 @@ function devApiPlugin(): Plugin {
                     'DNI (W/m²)',
                     'DHI (W/m²)',
                     'Elevation (°)',
+                    'Azimuth (°)',
+                    'T2m (°C)',
                   ],
                   description:
-                    'European Commission JRC solar radiation and hourly irradiance data.',
+                    'Service JRC de la Commission Européenne : rayonnement solaire horaire (GHI, DNI, DHI) et années météorologiques types.',
                 },
                 nasa_power: {
                   code: 'nasa_power',
                   name: 'NASA POWER (Prediction Of Worldwide Energy Resources)',
-                  state: 'configured',
+                  state: 'simulated',
                   base_url: 'https://power.larc.nasa.gov/api/temporal/',
                   target_version: 'V0.3',
                   is_active_in_v0_1: false,
@@ -119,12 +180,12 @@ function devApiPlugin(): Plugin {
                     'T2M (°C)',
                   ],
                   description:
-                    'Global satellite-derived surface solar irradiance from NASA Langley Research Center.',
+                    'Rayonnement solaire satellitaire mondial du NASA Langley Research Center (V0.3).',
                 },
                 noaa: {
                   code: 'noaa',
                   name: 'NOAA Space Weather Prediction Center (SWPC)',
-                  state: 'configured',
+                  state: 'simulated',
                   base_url: 'https://services.swpc.noaa.gov/',
                   target_version: 'V0.4',
                   is_active_in_v0_1: false,
@@ -141,12 +202,12 @@ function devApiPlugin(): Plugin {
                     'GOES X-Ray',
                   ],
                   description:
-                    'Real-time solar radio flux, geomagnetic indices, and space weather.',
+                    'Flux radio solaire et indices géomagnétiques en temps réel (V0.4).',
                 },
                 eumetsat: {
                   code: 'eumetsat',
                   name: 'EUMETSAT (European Meteorological Satellites)',
-                  state: 'configured',
+                  state: 'unavailable',
                   base_url: 'https://data.eumetsat.int/',
                   target_version: 'V0.7',
                   is_active_in_v0_1: false,
@@ -162,7 +223,7 @@ function devApiPlugin(): Plugin {
                     'Effective Cloud Albedo',
                   ],
                   description:
-                    'Geostationary satellite surface solar radiation products for cross-validation.',
+                    'Données satellitaires géostationnaires européennes pour inter-comparaison (V0.7).',
                 },
               },
             })
@@ -188,18 +249,19 @@ function devApiPlugin(): Plugin {
             res.end(
               JSON.stringify({
                 error: 'invalid_coordinates',
-                message: 'Latitude doit être comprise entre -90 et 90, et Longitude entre -180 et 180.',
+                message: 'Latitude doit être comprise entre -90.0 et 90.0, et Longitude entre -180.0 et 180.0 (WGS84).',
               })
             );
             return;
           }
 
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || isNaN(Date.parse(dateStr))) {
+          const dateValidation = isValidCalendarDate(dateStr);
+          if (!dateValidation.valid) {
             res.statusCode = 400;
             res.end(
               JSON.stringify({
                 error: 'invalid_date_format',
-                message: 'Format de date invalide. Format attendu : AAAA-MM-JJ.',
+                message: dateValidation.error || 'Format de date invalide. Format attendu : AAAA-MM-JJ.',
               })
             );
             return;
@@ -248,6 +310,7 @@ function devApiPlugin(): Plugin {
               ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
             }
 
+            const tempProxy = Math.round((14 + 7 * Math.sin(Math.max(0, elRad)) + 3 * Math.cos(latRad)) * 10) / 10;
             hourly.push({
               hour: h,
               time: `${dateStr}T${h.toString().padStart(2, '0')}:00:00Z`,
@@ -255,7 +318,12 @@ function devApiPlugin(): Plugin {
               dni,
               dhi,
               solar_elevation: Math.round(elDeg * 10) / 10,
-              temperature: Math.round((14 + 7 * Math.sin(Math.max(0, elRad)) + 3 * Math.cos(latRad)) * 10) / 10,
+              temperature: tempProxy,
+              ambient_temperature_proxy_c: tempProxy,
+              temperature_is_forecast: false,
+              temperature_note: 'Proxy physique indicatif (non issu d’une prévision ou station météo)',
+              time_semantics: 'hourly_integrated_mean',
+              interval_duration_hours: 1.0,
               quality_flag: 'simulated',
             });
           }

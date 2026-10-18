@@ -522,6 +522,63 @@ class MobileDatabase {
       tx.onerror = () => reject(tx.error);
     });
   }
+
+  /**
+   * Performs an actual verification of the on-device storage.
+   * Tests opening the database and querying object stores.
+   */
+  async checkHealth(): Promise<{
+    verified: boolean;
+    type: 'indexeddb' | 'memory_fallback';
+    message: string;
+    locationCount: number;
+    recordCount: number;
+  }> {
+    if (!this.isIndexedDBAvailable()) {
+      return {
+        verified: true,
+        type: 'memory_fallback',
+        message: 'IndexedDB non disponible dans cet environnement, exécution sur stockage mémoire de secours.',
+        locationCount: this.inMemoryLocations.length,
+        recordCount: this.inMemoryRecords.length,
+      };
+    }
+    try {
+      const db = await this.openDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction(['locations', 'radiation_records'], 'readonly');
+        const locCountReq = tx.objectStore('locations').count();
+        const recCountReq = tx.objectStore('radiation_records').count();
+
+        tx.oncomplete = () => {
+          resolve({
+            verified: true,
+            type: 'indexeddb',
+            message: 'Base IndexedDB locale sur smartphone vérifiée et opérationnelle.',
+            locationCount: locCountReq.result,
+            recordCount: recCountReq.result,
+          });
+        };
+        tx.onerror = () => {
+          resolve({
+            verified: false,
+            type: 'indexeddb',
+            message: `Erreur d'accès aux tables IndexedDB: ${tx.error?.message || 'Transaction échouée'}`,
+            locationCount: 0,
+            recordCount: 0,
+          });
+        };
+      });
+    } catch (e: any) {
+      return {
+        verified: false,
+        type: 'memory_fallback',
+        message: `Échec d'ouverture IndexedDB: ${e?.message || e}`,
+        locationCount: this.inMemoryLocations.length,
+        recordCount: this.inMemoryRecords.length,
+      };
+    }
+  }
 }
 
 export const mobileDatabase = new MobileDatabase();

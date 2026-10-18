@@ -1,4 +1,10 @@
-export type ProviderState = 'configured' | 'enabled' | 'disabled';
+export type ProviderState =
+  | 'configured'
+  | 'enabled'
+  | 'disabled'
+  | 'simulated'
+  | 'available'
+  | 'unavailable';
 
 export interface SupportedOperations {
   current: boolean;
@@ -24,7 +30,15 @@ export interface HealthResponse {
   service: string;
   version: string;
   database?: string;
+  database_verified?: boolean;
   timestamp: string;
+  components?: {
+    client_persistence?: string;
+    server_database_file?: string;
+    solar_physics_engine?: string;
+    pvgis_provider?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface InfoResponse {
@@ -37,6 +51,18 @@ export interface InfoResponse {
   roadmap: string[];
 }
 
+export interface AtmosphericModelParameters {
+  model_name: string;
+  solar_constant_w_m2: number;
+  orbital_eccentricity_correction: number;
+  aerosol_optical_depth_500nm: number;
+  ozone_column_cm_atm: number;
+  precipitable_water_cm: number;
+  site_elevation_m?: number;
+  atmospheric_pressure_ratio?: number;
+  validity_limits: string[];
+}
+
 export interface HourlyRadiationPoint {
   hour: number;
   time: string;
@@ -46,6 +72,11 @@ export interface HourlyRadiationPoint {
   solar_elevation: number;
   solar_azimuth?: number;
   temperature?: number;
+  ambient_temperature_proxy_c?: number;
+  temperature_is_forecast?: boolean;
+  temperature_note?: string;
+  time_semantics?: 'hourly_integrated_mean' | 'instantaneous_sample';
+  interval_duration_hours?: number;
   quality_flag?: string;
 }
 
@@ -68,6 +99,16 @@ export interface ScientificProvenance {
   spatial_resolution: string;
   temporal_resolution: string;
   solar_constant_w_m2: number;
+  atmospheric_parameters?: AtmosphericModelParameters;
+  integration_method: 'hourly_mean_integration' | 'trapezoidal_integration';
+  time_semantics: 'hourly_integrated_mean' | 'instantaneous_sample';
+  reference_benchmarks?: {
+    station_name: string;
+    latitude: number;
+    longitude: number;
+    expected_clear_sky_summer_solstice_kwh: string;
+    expected_clear_sky_winter_solstice_kwh: string;
+  }[];
   formulas: Record<string, ScientificIndicatorFormula>;
   quality_assessment: {
     status: 'measured' | 'satellite_derived' | 'model_clearsky' | 'estimated';
@@ -97,6 +138,8 @@ export interface HourlyRadiationResponse {
   extraterrestrial_daily_kwh_m2?: number;
   is_simulated?: boolean;
   warning?: string;
+  timezone?: string;
+  local_civil_hours_count?: number;
   provenance?: ScientificProvenance;
   hourly: HourlyRadiationPoint[];
 }

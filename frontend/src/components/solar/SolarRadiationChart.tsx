@@ -926,8 +926,9 @@ export const SolarRadiationChart: React.FC = () => {
               </span>
 
               {hoveredPoint.temperature !== undefined && (
-                <span className="text-slate-400">
-                  T°: <strong className="text-slate-200">{hoveredPoint.temperature}°C</strong>
+                <span className="text-slate-400" title="Proxy physique indicatif d’ambiance locale (non issu d’une station ou prévision météo)">
+                  T° proxy : <strong className="text-slate-200">{hoveredPoint.temperature}°C</strong>
+                  <span className="text-[10px] text-slate-500 ml-1 font-sans">(non météo)</span>
                 </span>
               )}
             </div>

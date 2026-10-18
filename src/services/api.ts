@@ -3,6 +3,8 @@ import { UnifiedSolarObservationRecord } from '../types/scientificModel';
 import { generateScientificSolarDay } from './physicsEngine';
 import { scientificCache, CACHE_TTL_TIERS } from './cachePolicy';
 import { validateCoordinates, validateDateString, generateScientificProvenance } from './solarCalculator';
+import { APP_ENV_CONFIG } from './envConfig';
+import { mobileDatabase } from './indexedDbService';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -10,15 +12,25 @@ export async function fetchHealth(): Promise<HealthResponse> {
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    return data;
   } catch {
-    // Graceful fallback for standalone mobile PWA / offline mode
+    // Real component verification on the client / offline smartphone environment
+    const storageCheck = await mobileDatabase.checkHealth();
     return {
-      status: 'ok',
+      status: storageCheck.verified ? 'ok' : 'degraded',
       service: 'solar-earth-api',
-      version: '0.2.0',
-      database: 'IndexedDB & SQLite locale sur smartphone (connectée)',
+      version: APP_ENV_CONFIG.APP_VERSION,
+      database: storageCheck.message,
+      database_verified: storageCheck.verified,
       timestamp: new Date().toISOString(),
+      components: {
+        client_persistence: storageCheck.type === 'indexeddb'
+          ? `IndexedDB (Vérifiée: ${storageCheck.locationCount} stations, ${storageCheck.recordCount} calculs)`
+          : 'Mémoire vive de secours (Non persistante)',
+        solar_physics_engine: 'Spencer 1971 / Bird & Hulstrom 1981 (Opérationnel)',
+        pvgis_provider: 'available (avec repli local autonome)',
+      },
     };
   }
 }
@@ -30,26 +42,26 @@ export async function fetchInfo(): Promise<InfoResponse> {
     return await res.json();
   } catch {
     return {
-      name: 'Solar Earth',
-      version: '0.2.0',
+      name: APP_ENV_CONFIG.APP_NAME || 'Solar Earth',
+      version: APP_ENV_CONFIG.APP_VERSION,
       environment: 'standalone-mobile',
       description:
         'Solar Earth V0.2 — Modèle scientifique unifié du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
-      database_type: 'IndexedDB & SQLite Local (Sur téléphone)',
+      database_type: 'IndexedDB & SQLite Local (Sur smartphone, zéro port réseau)',
       roadmap: [
         'V0.1: Architecture & database foundation (Complété)',
         'V0.2: PVGIS integration (GHI, DNI, DHI, séries 24h & cache maîtrisé) (Actif)',
-        'V0.3: NASA POWER integration (Worldwide solar & meteorology)',
-        'V0.4: NOAA SWPC integration (F10.7, Kp, Dst, flares)',
-        'V0.5: Solar Earth application indices (Clear Sky, SRI, SAI, GAI)',
-        'V0.6: Interactive global map & time slider',
-        'V0.7: EUMETSAT satellite validation products',
+        'V0.3: NASA POWER integration (Worldwide solar & meteorology) (En cours)',
+        'V0.4: NOAA SWPC integration (F10.7, Kp, Dst, flares) (Prévu)',
+        'V0.5: Solar Earth application indices (Clear Sky, SRI, SAI, GAI) (Prévu)',
+        'V0.6: Interactive global map & time slider (Prévu)',
+        'V0.7: EUMETSAT satellite validation products (Prévu)',
       ],
       providers: {
         pvgis: {
           code: 'pvgis',
           name: 'PVGIS (Photovoltaic Geographical Information System)',
-          state: 'enabled',
+          state: 'available',
           base_url: 'https://re.jrc.ec.europa.eu/api/v5_3/',
           target_version: 'V0.2',
           is_active_in_v0_1: true,
@@ -63,40 +75,40 @@ export async function fetchInfo(): Promise<InfoResponse> {
             'T2m (°C)',
           ],
           description:
-            'European Commission JRC service for solar radiation, hourly irradiance (GHI, DNI, DHI), and typical meteorological years.',
+            'Service JRC de la Commission Européenne : rayonnement solaire horaire (GHI, DNI, DHI) et années météorologiques types.',
         },
         nasa_power: {
           code: 'nasa_power',
           name: 'NASA POWER (Prediction Of Worldwide Energy Resources)',
-          state: 'configured',
+          state: 'simulated',
           base_url: 'https://power.larc.nasa.gov/api/temporal/',
           target_version: 'V0.3',
           is_active_in_v0_1: false,
           supported_operations: { current: false, hourly: true, daily: true, historical: true },
           supported_parameters: ['ALLSKY_SFC_SW_DWN (W/m²)', 'CLRSKY_SFC_SW_DWN (W/m²)', 'T2M (°C)'],
-          description: 'Global satellite-derived surface solar irradiance from NASA Langley Research Center.',
+          description: 'Rayonnement solaire satellitaire mondial du NASA Langley Research Center (V0.3).',
         },
         noaa: {
           code: 'noaa',
           name: 'NOAA Space Weather Prediction Center (SWPC)',
-          state: 'configured',
+          state: 'simulated',
           base_url: 'https://services.swpc.noaa.gov/',
           target_version: 'V0.4',
           is_active_in_v0_1: false,
           supported_operations: { current: true, hourly: true, daily: true, historical: true },
           supported_parameters: ['F10.7 (sfu)', 'Planetary Kp Index', 'Dst Index (nT)', 'GOES X-Ray'],
-          description: 'Real-time solar radio flux, geomagnetic indices, and space weather.',
+          description: 'Flux radio solaire et indices géomagnétiques en temps réel (V0.4).',
         },
         eumetsat: {
           code: 'eumetsat',
           name: 'EUMETSAT (European Meteorological Satellites)',
-          state: 'configured',
+          state: 'unavailable',
           base_url: 'https://data.eumetsat.int/',
           target_version: 'V0.7',
           is_active_in_v0_1: false,
           supported_operations: { current: true, hourly: true, daily: true, historical: true },
           supported_parameters: ['SIS Radiation (W/m²)', 'SID Radiation (W/m²)', 'Effective Cloud Albedo'],
-          description: 'Geostationary satellite surface solar radiation products for cross-validation.',
+          description: 'Données satellitaires géostationnaires européennes pour inter-comparaison (V0.7).',
         },
       },
     };
