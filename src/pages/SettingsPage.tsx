@@ -14,6 +14,7 @@ import {
   Check,
   ShieldCheck,
   Lock,
+  Upload,
 } from 'lucide-react';
 import { fetchHealth, fetchInfo } from '../services/api';
 import { mobileDatabase } from '../services/indexedDbService';
@@ -29,6 +30,7 @@ export const SettingsPage: React.FC = () => {
     dbName: 'SolarEarth_MobileDB',
   });
   const [exportSuccess, setExportSuccess] = useState<boolean>(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const refreshStats = async () => {
     const stats = await mobileDatabase.getStats();
@@ -59,6 +61,23 @@ export const SettingsPage: React.FC = () => {
       await mobileDatabase.clearDatabase();
       await refreshStats();
     }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const res = await mobileDatabase.importDatabaseJSON(text);
+      await refreshStats();
+      setImportMessage(`Import réussi : ${res.importedLocations} stations, ${res.importedRecords} historiques.`);
+      setTimeout(() => setImportMessage(null), 4000);
+    } catch (err: any) {
+      setImportMessage(`Erreur : ${err?.message || 'Fichier JSON invalide'}`);
+      setTimeout(() => setImportMessage(null), 5000);
+    }
+    e.target.value = '';
   };
 
   return (
@@ -122,14 +141,26 @@ export const SettingsPage: React.FC = () => {
           </div>
 
           {/* Database Actions */}
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2">
             <button
               onClick={handleExportJSON}
               className="flex-1 py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-slate-700"
             >
               <Download className="w-3.5 h-3.5 text-sky-400" />
-              {exportSuccess ? 'Téléchargé !' : 'Exporter sauvegarde (JSON)'}
+              {exportSuccess ? 'Téléchargé !' : 'Exporter (JSON)'}
             </button>
+
+            <label className="flex-1 py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-slate-700 cursor-pointer">
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Importer (JSON)</span>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleImportFile}
+                className="hidden"
+              />
+            </label>
+
             <button
               onClick={handleResetDB}
               className="py-1.5 px-3 bg-rose-950/30 hover:bg-rose-950/60 text-xs font-mono text-rose-300 rounded-lg transition-colors flex items-center justify-center gap-1 border border-rose-900/50"
@@ -139,6 +170,13 @@ export const SettingsPage: React.FC = () => {
               Reset
             </button>
           </div>
+
+          {importMessage && (
+            <div className="p-2.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-emerald-300 flex items-center gap-2 animate-in fade-in">
+              <CheckCircle className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+              <span>{importMessage}</span>
+            </div>
+          )}
         </div>
 
         {/* Calculation Engine & Physics */}

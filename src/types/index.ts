@@ -95,6 +95,8 @@ export interface HourlyRadiationResponse {
   product_version?: string;
   daily_clearness_index_kt?: number;
   extraterrestrial_daily_kwh_m2?: number;
+  is_simulated?: boolean;
+  warning?: string;
   provenance?: ScientificProvenance;
   hourly: HourlyRadiationPoint[];
 }

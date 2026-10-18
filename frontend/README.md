@@ -117,7 +117,7 @@ npm run typecheck
 # Lance les tests unitaires, les calculs physiques et les composants UI
 npm run test:run
 ```
-*Résultat attendu : 14/14 tests réussis (tests physiques du rayonnement et tests des composants).*
+*Résultat attendu : 16/16 tests réussis (tests physiques du rayonnement et tests des composants).*
 
 ### Étape 5 : Compilation de production (Build PWA)
 ```bash

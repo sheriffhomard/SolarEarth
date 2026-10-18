@@ -395,6 +395,116 @@ class MobileDatabase {
     );
   }
 
+  async importDatabaseJSON(
+    jsonStr: string
+  ): Promise<{ importedLocations: number; importedRecords: number }> {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      throw new Error('Fichier JSON invalide ou corrompu.');
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Structure JSON de sauvegarde invalide.');
+    }
+
+    const locationsToImport: MobileLocation[] = [];
+    if (Array.isArray(parsed.locations)) {
+      for (const loc of parsed.locations) {
+        if (
+          loc &&
+          typeof loc.name === 'string' &&
+          typeof loc.latitude === 'number' &&
+          typeof loc.longitude === 'number'
+        ) {
+          locationsToImport.push({
+            id:
+              loc.id ||
+              `loc-imp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            name: loc.name.trim().substring(0, 100),
+            latitude: Math.max(-90, Math.min(90, loc.latitude)),
+            longitude: Math.max(-180, Math.min(180, loc.longitude)),
+            country: typeof loc.country === 'string' ? loc.country.trim() : 'Monde',
+            timezone: typeof loc.timezone === 'string' ? loc.timezone.trim() : 'UTC',
+            is_default: Boolean(loc.is_default),
+            created_at: loc.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    const recordsToImport: StoredRadiationRecord[] = [];
+    if (Array.isArray(parsed.records)) {
+      for (const rec of parsed.records) {
+        if (
+          rec &&
+          typeof rec.location_name === 'string' &&
+          typeof rec.date === 'string'
+        ) {
+          recordsToImport.push({
+            id:
+              rec.id ||
+              `rec-imp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            location_name: rec.location_name.trim().substring(0, 100),
+            latitude: typeof rec.latitude === 'number' ? rec.latitude : 0,
+            longitude: typeof rec.longitude === 'number' ? rec.longitude : 0,
+            date: rec.date,
+            daily_irradiation_kwh:
+              typeof rec.daily_irradiation_kwh === 'number'
+                ? rec.daily_irradiation_kwh
+                : 0,
+            peak_ghi: typeof rec.peak_ghi === 'number' ? rec.peak_ghi : 0,
+            peak_dni: typeof rec.peak_dni === 'number' ? rec.peak_dni : 0,
+            sunshine_hours:
+              typeof rec.sunshine_hours === 'number' ? rec.sunshine_hours : 0,
+            source: rec.source || 'imported',
+            created_at: rec.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    if (!this.isIndexedDBAvailable()) {
+      for (const l of locationsToImport) {
+        if (!this.inMemoryLocations.some((ex) => ex.id === l.id || (ex.name === l.name && Math.abs(ex.latitude - l.latitude) < 0.001))) {
+          this.inMemoryLocations.push(l);
+        }
+      }
+      for (const r of recordsToImport) {
+        if (!this.inMemoryRecords.some((ex) => ex.id === r.id)) {
+          this.inMemoryRecords.push(r);
+        }
+      }
+      return {
+        importedLocations: locationsToImport.length,
+        importedRecords: recordsToImport.length,
+      };
+    }
+
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['locations', 'radiation_records'], 'readwrite');
+      const locStore = tx.objectStore('locations');
+      const recStore = tx.objectStore('radiation_records');
+
+      for (const loc of locationsToImport) {
+        locStore.put(loc);
+      }
+      for (const rec of recordsToImport) {
+        recStore.put(rec);
+      }
+
+      tx.oncomplete = () => {
+        resolve({
+          importedLocations: locationsToImport.length,
+          importedRecords: recordsToImport.length,
+        });
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   async clearDatabase(): Promise<void> {
     const db = await this.openDB();
     return new Promise((resolve, reject) => {

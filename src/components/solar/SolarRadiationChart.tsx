@@ -601,6 +601,25 @@ export const SolarRadiationChart: React.FC = () => {
         </div>
       )}
 
+      {/* Simulation / Physical Model Transparency Banner */}
+      {radiationData?.is_simulated && (
+        <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-start gap-2.5 text-xs text-amber-200">
+          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <div className="font-bold text-amber-300 flex items-center gap-1.5">
+              <span>Simulation par Modèle Astronomique Local (Hors-Ligne)</span>
+              <span className="text-[10px] px-1.5 py-0.2 bg-amber-900/60 border border-amber-700/60 rounded text-amber-300">
+                Non Mesuré
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-200/80 leading-relaxed font-sans">
+              {radiationData.warning ||
+                'Ces valeurs sont calculées localement par algorithme astronomique (Spencer & Bird) sur le processeur du smartphone. Elles ne proviennent pas d’observations satellitaires réelles PVGIS JRC.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI Ribbon: High-precision scientific metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
         <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg">

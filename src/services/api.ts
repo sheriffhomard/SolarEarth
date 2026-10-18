@@ -213,7 +213,7 @@ export async function fetchHourlyRadiation(
       physicalDay.peak_ghi_w_m2,
       physicalDay.peak_dni_w_m2,
       physicalDay.sunshine_hours_wmo,
-      'pvgis_validated_clearsky'
+      'simulated_clearsky_model'
     );
 
     const fallbackResult: HourlyRadiationResponse = {
@@ -221,16 +221,19 @@ export async function fetchHourlyRadiation(
       latitude: normLat,
       longitude: normLon,
       date: targetDate,
-      source: 'model_clearsky_spencer_bird',
+      source: 'simulated_clearsky_model',
       units: 'W/m² for irradiance, kWh/m² for irradiation',
       daily_irradiation_kwh: physicalDay.daily_ghi_kwh_m2,
       peak_ghi: physicalDay.peak_ghi_w_m2,
       peak_dni: physicalDay.peak_dni_w_m2,
       sunshine_hours: physicalDay.sunshine_hours_wmo,
+      is_simulated: true,
+      warning:
+        'DONNÉES SIMULÉES : Calculées par le modèle astronomique local théorique (Spencer & Bird). Ces données ne proviennent pas des satellites PVGIS JRC.',
       cached: false,
       cache_status: 'fallback_model',
       cache_timestamp_utc: physicalDay.retrieval_date_utc,
-      product_name: physicalDay.product_name,
+      product_name: 'Modèle Solaire Ciel Clair (Simulation Locale - Hors-Ligne)',
       product_version: physicalDay.product_version,
       daily_clearness_index_kt: physicalDay.daily_clearness_index_kt,
       extraterrestrial_daily_kwh_m2: physicalDay.extraterrestrial_daily_kwh_m2,

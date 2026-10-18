@@ -144,9 +144,10 @@ describe('Solar Physics Engine — Physical Validation & Unit Consistency (Prior
     expect(result.provenance).toBeDefined();
 
     const prov = result.provenance!;
-    expect(prov.source_name).toContain('Validé');
+    expect(prov.source_id).toBe('simulated_clearsky_model');
+    expect(prov.source_name).toContain('Modèle Astronomique');
     expect(prov.source_version).toBeDefined();
-    expect(prov.spatial_resolution).toBe('0.05° (~5 km)');
+    expect(prov.spatial_resolution).toContain('WGS84');
     expect(prov.temporal_resolution).toBe('1 heure (moyenne intégrée)');
     expect(prov.solar_constant_w_m2).toBe(1361.2);
 
@@ -161,5 +162,12 @@ describe('Solar Physics Engine — Physical Validation & Unit Consistency (Prior
     expect(prov.quality_assessment.missing_values_count).toBe(0);
     expect(prov.quality_assessment.outliers_detected).toBe(0);
     expect(prov.quality_assessment.closure_equation_verified).toBe(true);
+
+    // Also verify PVGIS satellite provenance structure
+    const pvgisProv = generateScientificProvenance(48.836, 2.336, '2026-06-21', 6.2, 850, 780, 11, 'pvgis_jrc_sarah2');
+    expect(pvgisProv.source_id).toBe('pvgis_jrc_sarah2');
+    expect(pvgisProv.source_name).toContain('PVGIS');
+    expect(pvgisProv.spatial_resolution).toBe('0.05° (~5 km)');
+    expect(pvgisProv.quality_assessment.status).toBe('satellite_derived');
   });
 });

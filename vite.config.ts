@@ -5,40 +5,37 @@ import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// Pre-populate all reference environment variables automatically for client & server
-const DEFAULT_ENV: Record<string, string> = {
+// Whitelist of strictly public frontend variables.
+// NO server secrets (database credentials, private keys) are ever exposed to the client bundle.
+const PUBLIC_FRONTEND_ENV: Record<string, string> = {
+  VITE_APP_NAME: 'Solar Earth',
+  VITE_APP_VERSION: '0.2.0',
+  VITE_API_BASE_URL: '/api/v1',
+  VITE_PVGIS_BASE_URL: 'https://re.jrc.ec.europa.eu/api/v5_3/',
+  VITE_PVGIS_ENABLED: 'true',
+  VITE_PVGIS_CACHE_TTL_DAYS: '30',
+  VITE_PVGIS_RATE_LIMIT_PER_MINUTE: '20',
+};
+
+// Internal server defaults (kept server-side, not exposed to browser bundle)
+const SERVER_INTERNAL_ENV: Record<string, string> = {
   APP_NAME: 'Solar Earth',
   APP_VERSION: '0.2.0',
   APP_ENV: 'development',
   LOG_LEVEL: 'INFO',
   DEBUG: 'false',
   DATABASE_URL: 'sqlite:///./solar_earth.db',
-  PVGIS_BASE_URL: 'https://re.jrc.ec.europa.eu/api/v5_3/',
-  PVGIS_ENABLED: 'true',
-  PVGIS_CACHE_TTL_DAYS: '30',
-  PVGIS_RATE_LIMIT_PER_MINUTE: '20',
-  NASA_POWER_BASE_URL: 'https://power.larc.nasa.gov/api/temporal/',
-  NASA_POWER_ENABLED: 'false',
-  NASA_POWER_API_KEY: 'DEMO_KEY',
-  NOAA_BASE_URL: 'https://services.swpc.noaa.gov/',
-  NOAA_ENABLED: 'false',
-  EUMETSAT_BASE_URL: 'https://data.eumetsat.int/',
-  EUMETSAT_ENABLED: 'false',
-  EUMETSAT_CONSUMER_KEY: 'eumetsat_consumer_key_placeholder',
-  EUMETSAT_CONSUMER_SECRET: 'eumetsat_consumer_secret_placeholder',
-  PROVIDER_REQUEST_TIMEOUT_SECONDS: '15.0',
-  PROVIDER_MAX_RETRIES: '3',
-  VITE_API_BASE_URL: '/api/v1',
   PORT: '3000',
 };
 
-for (const [key, val] of Object.entries(DEFAULT_ENV)) {
+for (const [key, val] of Object.entries(SERVER_INTERNAL_ENV)) {
   if (!process.env[key]) {
     process.env[key] = val;
   }
-  const viteKey = key.startsWith('VITE_') ? key : `VITE_${key}`;
-  if (!process.env[viteKey]) {
-    process.env[viteKey] = val;
+}
+for (const [key, val] of Object.entries(PUBLIC_FRONTEND_ENV)) {
+  if (!process.env[key]) {
+    process.env[key] = val;
   }
 }
 
@@ -208,22 +205,58 @@ function devApiPlugin(): Plugin {
             return;
           }
 
-          // 24h clear-sky solar curve based on solar position physics
+          // Astronomical solar calculation based on real Spencer (1971) & Bird (1981) equations
+          const parts = dateStr.split('-').map(Number);
+          const year = parts[0];
+          const month = parts[1];
+          const day = parts[2];
+          const targetD = new Date(Date.UTC(year, month - 1, day));
+          const startYear = new Date(Date.UTC(year, 0, 1));
+          const dayOfYear = Math.floor((targetD.getTime() - startYear.getTime()) / 86400000) + 1;
+          const latRad = (lat * Math.PI) / 180;
+
           const hourly = [];
           for (let h = 0; h < 24; h++) {
-            const el = Math.max(0, Math.round((Math.sin(((h - 6) / 12) * Math.PI) * 62) * 10) / 10);
-            const dni = el > 0 ? Math.round(850 * Math.sin((el * Math.PI) / 180)) : 0;
-            const dhi = el > 0 ? Math.round(110 * Math.sin((el * Math.PI) / 180) + 15) : 0;
-            const ghi = el > 0 ? Math.round(dni * Math.sin((el * Math.PI) / 180) + dhi) : 0;
+            const gamma = (2 * Math.PI / 365) * (dayOfYear - 1 + (h - 12) / 24);
+            const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma) - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
+            const decl = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma);
+            const timeOffset = eqtime + 4 * lon;
+            const tst = (h * 60 + timeOffset) % 1440;
+            const haRad = (((tst / 4) - 180) * Math.PI) / 180;
+
+            let cosZenith = Math.sin(latRad) * Math.sin(decl) + Math.cos(latRad) * Math.cos(decl) * Math.cos(haRad);
+            cosZenith = Math.max(-1, Math.min(1, cosZenith));
+            const elRad = Math.asin(cosZenith);
+            const elDeg = (elRad * 180) / Math.PI;
+
+            let ghi = 0;
+            let dni = 0;
+            let dhi = 0;
+
+            if (elDeg > 0) {
+              const theta0 = (2 * Math.PI * (dayOfYear - 1)) / 365;
+              const ecc = 1.00011 + 0.034221 * Math.cos(theta0) + 0.00128 * Math.sin(theta0);
+              const i0 = 1361.2 * ecc;
+              const sinEl = Math.sin(elRad);
+              const zenithDeg = 90 - elDeg;
+              const airMass = Math.max(1, Math.min(30, 1 / (sinEl + 0.50572 * Math.pow(Math.max(0.1, 96.07995 - zenithDeg), -1.6364))));
+              const tauBeam = Math.exp(-0.16 * airMass);
+              const tauDiff = 0.08 + 0.04 * sinEl;
+
+              dni = Math.max(0, Math.round(i0 * tauBeam * 10) / 10);
+              dhi = Math.max(0, Math.round(i0 * sinEl * tauDiff * 10) / 10);
+              ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
+            }
+
             hourly.push({
               hour: h,
               time: `${dateStr}T${h.toString().padStart(2, '0')}:00:00Z`,
               ghi,
               dni,
               dhi,
-              solar_elevation: el,
-              temperature: Math.round((14 + 8 * (el / 65)) * 10) / 10,
-              quality_flag: 'pvgis_validated',
+              solar_elevation: Math.round(elDeg * 10) / 10,
+              temperature: Math.round((14 + 7 * Math.sin(Math.max(0, elRad)) + 3 * Math.cos(latRad)) * 10) / 10,
+              quality_flag: 'simulated',
             });
           }
 
@@ -239,24 +272,26 @@ function devApiPlugin(): Plugin {
               latitude: lat,
               longitude: lon,
               date: dateStr,
-              source: 'pvgis_jrc',
+              source: 'simulated_clearsky_model',
               units: 'W/m² for irradiance, kWh/m² for irradiation',
               daily_irradiation_kwh: dailyKwh,
               peak_ghi: peakGhi,
               peak_dni: peakDni,
               sunshine_hours: sunshineHours,
-              cached: true,
-              cache_status: 'fresh',
+              is_simulated: true,
+              warning: 'DONNÉES SIMULÉES : Calculées par le modèle astronomique local théorique (Spencer & Bird). Ces données ne proviennent pas des satellites PVGIS JRC.',
+              cached: false,
+              cache_status: 'fallback_model',
               cache_timestamp_utc: nowIso,
-              product_name: 'PVGIS-SARAH2 / JRC European Commission',
-              product_version: 'v5.3',
+              product_name: 'Modèle Solaire Ciel Clair (Simulation Locale - Hors-Ligne)',
+              product_version: 'v1.0 (Spencer / Bird)',
               provenance: {
-                source_id: 'pvgis_jrc_sarah2',
-                source_name: 'Commission Européenne JRC — PVGIS v5.3 (SARAH-2 / ERA5)',
-                source_version: 'v5.3',
+                source_id: 'simulated_clearsky_model',
+                source_name: 'Modèle Astronomique Théorique Local (Spencer 1971 / Bird 1981)',
+                source_version: 'v1.0',
                 data_retrieval_date_utc: nowIso,
                 calculation_date_utc: nowIso,
-                spatial_resolution: '0.05° (~5 km)',
+                spatial_resolution: 'Position ponctuelle exacte (WGS84)',
                 temporal_resolution: '1 heure (moyenne intégrée)',
                 solar_constant_w_m2: 1361.2,
                 formulas: {
@@ -284,12 +319,12 @@ function devApiPlugin(): Plugin {
                     formula_text: 'GHI = DNI · sin(hauteur) + DHI',
                     unit: 'W/m²',
                     reference_standard: 'Bilan radiatif atmosphérique standard',
-                    calculated_value: 'Vérifiée',
+                    calculated_value: 'Modélisée',
                     calculated_at_utc: nowIso,
                   },
                 },
                 quality_assessment: {
-                  status: 'satellite_derived',
+                  status: 'model_clearsky',
                   missing_values_count: 0,
                   outliers_detected: 0,
                   closure_equation_verified: true,
@@ -330,14 +365,10 @@ export default defineConfig(() => {
     },
     define: {
       ...Object.fromEntries(
-        Object.entries(DEFAULT_ENV).flatMap(([key, val]) => {
-          const viteKey = key.startsWith('VITE_') ? key : `VITE_${key}`;
-          const currentVal = process.env[viteKey] || process.env[key] || val;
-          return [
-            [`import.meta.env.${viteKey}`, JSON.stringify(currentVal)],
-            [`import.meta.env.${key}`, JSON.stringify(currentVal)],
-          ];
-        })
+        Object.entries(PUBLIC_FRONTEND_ENV).map(([key, defaultVal]) => [
+          `import.meta.env.${key}`,
+          JSON.stringify(process.env[key] || defaultVal),
+        ])
       ),
     },
     test: {

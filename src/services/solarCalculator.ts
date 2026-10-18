@@ -48,19 +48,20 @@ export function generateScientificProvenance(
   peakGhi: number,
   peakDni: number,
   sunshineHours: number,
-  sourceId: 'pvgis_jrc_sarah2' | 'pvgis_validated_clearsky' = 'pvgis_validated_clearsky'
+  sourceId: 'pvgis_jrc_sarah2' | 'simulated_clearsky_model' = 'simulated_clearsky_model'
 ): ScientificProvenance {
   const nowUtc = new Date().toISOString();
+  const isPvgis = sourceId === 'pvgis_jrc_sarah2';
 
   return {
     source_id: sourceId,
-    source_name: sourceId === 'pvgis_jrc_sarah2'
-      ? 'Commission Européenne JRC — PVGIS v5.3 (Données satellitaires SARAH-2 / ERA5)'
-      : 'Modèle Astronomique Ciel Clair Validé (Spencer / Bird / Kasten & Young)',
-    source_version: 'v5.3-2026',
+    source_name: isPvgis
+      ? 'Commission Européenne JRC — PVGIS v5.3 (Observations satellitaires SARAH-2 / ERA5)'
+      : 'Modèle Astronomique Théorique Local (Spencer 1971 / Bird 1981 / Kasten & Young)',
+    source_version: isPvgis ? 'PVGIS-v5.3' : 'Simulated-Clearsky-v1.0',
     data_retrieval_date_utc: nowUtc,
     calculation_date_utc: nowUtc,
-    spatial_resolution: '0.05° (~5 km)',
+    spatial_resolution: isPvgis ? '0.05° (~5 km)' : 'Position ponctuelle exacte (WGS84)',
     temporal_resolution: '1 heure (moyenne intégrée)',
     solar_constant_w_m2: 1361.2,
     formulas: {
@@ -255,7 +256,7 @@ export function calculateClientSolar24h(
     peakGhi,
     peakDni,
     sunshineHours,
-    'pvgis_validated_clearsky'
+    'simulated_clearsky_model'
   );
 
   return {
@@ -263,7 +264,12 @@ export function calculateClientSolar24h(
     latitude,
     longitude,
     date: dateStr,
-    source: 'pvgis_validated_clearsky',
+    source: 'simulated_clearsky_model',
+    product_name: 'Modèle Solaire Ciel Clair (Simulation Locale Hors-ligne)',
+    product_version: 'v1.0 (Spencer / Bird)',
+    is_simulated: true,
+    warning:
+      'DONNÉES SIMULÉES : Calculées par le modèle astronomique local théorique (Spencer & Bird). Ces données ne proviennent pas des satellites PVGIS JRC.',
     units: 'W/m² for irradiance, kWh/m² for irradiation',
     daily_irradiation_kwh: dailyKwh,
     peak_ghi: peakGhi,
