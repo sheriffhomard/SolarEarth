@@ -53,7 +53,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ isOpen, onClose }) => {
             </div>
 
             <div className="pt-6 border-t border-slate-800 text-xs font-mono text-slate-400">
-              Solar Earth · V0.1 Fondation
+              Solar Earth · V0.2 Intégration PVGIS
             </div>
           </div>
         </div>
@@ -62,22 +62,22 @@ export const MobileNav: React.FC<MobileNavProps> = ({ isOpen, onClose }) => {
       {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Barre d'onglets mobile"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 px-2 py-1.5 flex items-center justify-around"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 px-1 py-1 flex items-center justify-around"
       >
-        {navItems.map((item) => {
+        {navItems.slice(0, 5).map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `flex flex-col items-center justify-center p-2 rounded-lg text-[10px] font-medium transition-colors ${
+                `flex flex-col items-center justify-center py-1.5 px-2 rounded-lg text-[9px] font-medium transition-colors ${
                   isActive ? 'text-amber-400 font-semibold' : 'text-slate-400 hover:text-slate-300'
                 }`
               }
             >
-              <Icon className="w-5 h-5 mb-0.5" />
-              <span>{item.name}</span>
+              <Icon className="w-4 h-4 mb-0.5" />
+              <span className="truncate max-w-[55px] text-center">{item.name}</span>
             </NavLink>
           );
         })}
