@@ -4,7 +4,12 @@ import {
   ScientificProvenance,
   AtmosphericModelParameters,
 } from '../types';
-import { calculateBirdHulstromClearSky } from './physicsEngine';
+import {
+  calculateBirdHulstromClearSky,
+  integrateHourlyBirdHulstrom,
+  BirdHulstromAtmosphericInputs,
+  getExtraterrestrialNormalIrradiance,
+} from './physicsEngine';
 
 /**
  * Validates whether a given Gregorian year is a leap year.
@@ -36,29 +41,72 @@ export function getDaysInMonth(year: number, month: number): number {
 }
 
 /**
+ * Checks whether an input strictly represents a valid decimal or integer number.
+ * Rejects strings containing letters (e.g. "48.8abc", "abc"), empty/whitespace-only values, NaN, and Infinity.
+ */
+export function isStrictNumericCoordinate(val: unknown): boolean {
+  if (typeof val === 'number') {
+    return Number.isFinite(val) && !Number.isNaN(val);
+  }
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (trimmed === '') return false;
+  // Strict regex for valid decimal or integer without any alphabetic or illegal characters
+  return /^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(trimmed);
+}
+
+/**
  * Validates geographic coordinates according to WGS84 standard.
- * Accepts exact boundaries: Latitude [-90.0°, +90.0°] and Longitude [-180.0°, +180.0°].
+ * Strictly verifies numeric format (rejects "48.8abc", empty fields, NaN, Infinity)
+ * and accepts exact boundaries: Latitude [-90.0°, +90.0°] and Longitude [-180.0°, +180.0°].
  */
 export function validateCoordinates(
-  latitude: number,
-  longitude: number
+  latitude: unknown,
+  longitude: unknown
 ): { valid: boolean; error?: string } {
-  if (typeof latitude !== 'number' || isNaN(latitude)) {
-    return { valid: false, error: 'La latitude doit être un nombre valide.' };
+  if (latitude === null || latitude === undefined || String(latitude).trim() === '') {
+    return { valid: false, error: 'La latitude est requise et ne peut être vide.' };
   }
-  if (typeof longitude !== 'number' || isNaN(longitude)) {
-    return { valid: false, error: 'La longitude doit être un nombre valide.' };
+  if (longitude === null || longitude === undefined || String(longitude).trim() === '') {
+    return { valid: false, error: 'La longitude est requise et ne peut être vide.' };
   }
-  if (latitude < -90.0 || latitude > 90.0) {
+
+  const latStr = String(latitude).trim();
+  const lonStr = String(longitude).trim();
+
+  if (!isStrictNumericCoordinate(latitude)) {
     return {
       valid: false,
-      error: `Latitude hors bornes [${latitude}]: doit être comprise entre -90.0° et +90.0° (WGS84).`,
+      error: `Latitude invalide ("${latStr}"): doit être un nombre décimal strict sans caractères alphabétiques (rejet des chaînes comme "48.8abc", NaN ou Infinity).`,
     };
   }
-  if (longitude < -180.0 || longitude > 180.0) {
+  if (!isStrictNumericCoordinate(longitude)) {
     return {
       valid: false,
-      error: `Longitude hors bornes [${longitude}]: doit être comprise entre -180.0° et +180.0° (WGS84).`,
+      error: `Longitude invalide ("${lonStr}"): doit être un nombre décimal strict sans caractères alphabétiques (rejet des chaînes comme "2.3abc", NaN ou Infinity).`,
+    };
+  }
+
+  const latNum = typeof latitude === 'number' ? latitude : Number(latStr);
+  const lonNum = typeof longitude === 'number' ? longitude : Number(lonStr);
+
+  if (!Number.isFinite(latNum) || Number.isNaN(latNum)) {
+    return { valid: false, error: 'La latitude doit être un nombre fini non-NaN.' };
+  }
+  if (!Number.isFinite(lonNum) || Number.isNaN(lonNum)) {
+    return { valid: false, error: 'La longitude doit être un nombre fini non-NaN.' };
+  }
+
+  if (latNum < -90.0 || latNum > 90.0) {
+    return {
+      valid: false,
+      error: `Latitude hors bornes [${latNum}]: doit être comprise entre -90.0° et +90.0° (WGS84).`,
+    };
+  }
+  if (lonNum < -180.0 || lonNum > 180.0) {
+    return {
+      valid: false,
+      error: `Longitude hors bornes [${lonNum}]: doit être comprise entre -180.0° et +180.0° (WGS84).`,
     };
   }
   return { valid: true };
@@ -431,7 +479,15 @@ export function calculateClientSolar24h(
   longitude: number,
   dateStr: string,
   locationName?: string,
-  timezone: string = 'Europe/Paris'
+  timezone: string = 'Europe/Paris',
+  atmosphericInputs: BirdHulstromAtmosphericInputs = {
+    pressureRatio: 1.0,
+    ozoneCmAtm: 0.34,
+    precipitableWaterCm: 1.5,
+    aerosolOpticalDepth500: 0.10,
+    groundAlbedo: 0.20,
+    forwardScatterFraction: 0.84,
+  }
 ): HourlyRadiationResponse {
   // Input validation with strict calendar date and coordinate checking
   const coordVal = validateCoordinates(latitude, longitude);
@@ -443,6 +499,9 @@ export function calculateClientSolar24h(
     throw new Error(dateVal.error);
   }
 
+  const latNum = Number(latitude);
+  const lonNum = Number(longitude);
+
   const parts = dateStr.split('-').map(Number);
   const year = parts[0];
   const month = parts[1];
@@ -451,79 +510,34 @@ export function calculateClientSolar24h(
   const d = new Date(Date.UTC(year, month - 1, day));
   const startOfYear = new Date(Date.UTC(year, 0, 1));
   const dayOfYear = Math.floor((d.getTime() - startOfYear.getTime()) / 86400000) + 1;
+  const i0 = getExtraterrestrialNormalIrradiance(dayOfYear);
 
   const points: HourlyRadiationPoint[] = [];
 
   for (let hour = 0; hour < 24; hour++) {
-    // 1. ASTRONOMICAL SOLAR POSITION MODEL (Spencer 1971)
-    const gamma = ((2 * Math.PI) / 365.25) * (dayOfYear - 1 + (hour - 12) / 24);
+    // True composite trapezoidal integration over [hour, hour+1] UTC
+    const integrated = integrateHourlyBirdHulstrom(
+      latNum,
+      lonNum,
+      dayOfYear,
+      hour,
+      i0,
+      atmosphericInputs
+    );
 
-    const eqtime =
-      229.18 *
-      (0.000075 +
-        0.001868 * Math.cos(gamma) -
-        0.032077 * Math.sin(gamma) -
-        0.014615 * Math.cos(2 * gamma) -
-        0.040849 * Math.sin(2 * gamma));
+    const ghi = integrated.ghiIntegrated;
+    const dni = integrated.dniIntegrated;
+    const dhi = integrated.dhiIntegrated;
+    const elevationDeg = integrated.midpointElevationDeg;
+    const azimuthDeg = integrated.midpointAzimuthDeg;
 
-    const decl =
-      0.006918 -
-      0.399912 * Math.cos(gamma) +
-      0.070257 * Math.sin(gamma) -
-      0.006758 * Math.cos(2 * gamma) +
-      0.000907 * Math.sin(2 * gamma) -
-      0.002697 * Math.cos(3 * gamma) +
-      0.00148 * Math.sin(3 * gamma);
-
-    const timeOffset = eqtime + 4 * longitude;
-    const tst = (hour * 60 + timeOffset + 1440) % 1440;
-    const haDeg = tst / 4 - 180;
-    const haRad = (haDeg * Math.PI) / 180;
-
-    const latRad = (latitude * Math.PI) / 180;
-
-    let cosZenith =
-      Math.sin(latRad) * Math.sin(decl) + Math.cos(latRad) * Math.cos(decl) * Math.cos(haRad);
-    cosZenith = Math.max(-1, Math.min(1, cosZenith));
-    const elevationRad = Math.asin(cosZenith);
-    const elevationDeg = (elevationRad * 180) / Math.PI;
-
-    // 2. CLEAR SKY RADIATION MODEL (Bird & Hulstrom 1981 / Spencer 1971)
-    let ghi = 0;
-    let dni = 0;
-    let dhi = 0;
-
-    if (elevationDeg > 0) {
-      const theta0 = (2 * Math.PI * (dayOfYear - 1)) / 365.25;
-      const ecc =
-        1.00011 +
-        0.034221 * Math.cos(theta0) +
-        0.00128 * Math.sin(theta0) +
-        0.000719 * Math.cos(2 * theta0);
-      const i0 = 1361.2 * ecc;
-      const zenithDeg = 90 - elevationDeg;
-
-      const bird = calculateBirdHulstromClearSky(i0, zenithDeg, {
-        pressureRatio: 1.0,
-        ozoneCmAtm: 0.34,
-        precipitableWaterCm: 1.5,
-        aerosolOpticalDepth500: 0.10,
-        groundAlbedo: 0.20,
-      });
-
-      dni = bird.dni;
-      dhi = bird.dhi;
-      ghi = bird.ghi;
-    }
-
-    // 3. TEMPERATURE PROXY (Explicitly marked as non-forecast illustrative proxy)
-    const tempProxy =
-      Math.round(
-        (14 +
-          7 * Math.sin(Math.max(0, elevationRad)) +
-          3 * Math.cos(latRad)) *
-          10
-      ) / 10;
+    // Explicit illustrative temperature proxy - strictly NOT a meteorological data point
+    const tempProxy = Math.round(
+      (14 +
+        7 * Math.sin(Math.max(0, (elevationDeg * Math.PI) / 180)) +
+        3 * Math.cos((latNum * Math.PI) / 180)) *
+        10
+    ) / 10;
 
     points.push({
       hour,
@@ -532,11 +546,12 @@ export function calculateClientSolar24h(
       dni,
       dhi,
       solar_elevation: Math.round(elevationDeg * 10) / 10,
-      temperature: tempProxy,
+      solar_azimuth: Math.round(azimuthDeg * 10) / 10,
+      // Strictly reserve temperature for real meteorological sources; leave undefined for local simulation
+      temperature: undefined,
       ambient_temperature_proxy_c: tempProxy,
       temperature_is_forecast: false,
-      temperature_note:
-        'Proxy thermique physique indicatif d’échauffement local (non assimilable à une mesure ou prévision météo).',
+      temperature_note: 'Proxy physique indicatif (estimation théorique simplifiée, non issu d’une prévision ou station météo).',
       time_semantics: 'hourly_integrated_mean',
       interval_duration_hours: 1.0,
       quality_flag: 'model_clearsky',

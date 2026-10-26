@@ -462,4 +462,117 @@ describe('Solar Physics Engine — Physical Validation & Unit Consistency (Prior
     expect(night.dhi).toBe(0);
     expect(night.ghi).toBe(0);
   });
+
+  it('18. Strict Numeric Coordinate Validation: Rejects trailing letters, empty strings, NaN, Infinity', async () => {
+    const { validateCoordinates, isStrictNumericCoordinate } = await import(
+      '../services/solarCalculator'
+    );
+
+    // Strict numeric check helper
+    expect(isStrictNumericCoordinate('48.8566')).toBe(true);
+    expect(isStrictNumericCoordinate(48.8566)).toBe(true);
+    expect(isStrictNumericCoordinate('-2.3522')).toBe(true);
+    expect(isStrictNumericCoordinate('0')).toBe(true);
+
+    // Rejections of trailing letters and malformed numeric strings
+    expect(isStrictNumericCoordinate('48.8abc')).toBe(false);
+    expect(isStrictNumericCoordinate('abc48.8')).toBe(false);
+    expect(isStrictNumericCoordinate('')).toBe(false);
+    expect(isStrictNumericCoordinate('   ')).toBe(false);
+    expect(isStrictNumericCoordinate('NaN')).toBe(false);
+    expect(isStrictNumericCoordinate(NaN)).toBe(false);
+    expect(isStrictNumericCoordinate('Infinity')).toBe(false);
+    expect(isStrictNumericCoordinate(Infinity)).toBe(false);
+    expect(isStrictNumericCoordinate(-Infinity)).toBe(false);
+
+    // Full coordinate validator rejection
+    expect(validateCoordinates('48.8abc', 2.35).valid).toBe(false);
+    expect(validateCoordinates(48.85, '2.35xyz').valid).toBe(false);
+    expect(validateCoordinates('', 2.35).valid).toBe(false);
+    expect(validateCoordinates(NaN, 2.35).valid).toBe(false);
+    expect(validateCoordinates(48.85, Infinity).valid).toBe(false);
+
+    // Exact boundary limits (WGS84)
+    expect(validateCoordinates(90, 180).valid).toBe(true);
+    expect(validateCoordinates(-90, -180).valid).toBe(true);
+    expect(validateCoordinates(90.0001, 0).valid).toBe(false);
+    expect(validateCoordinates(-90.0001, 0).valid).toBe(false);
+    expect(validateCoordinates(0, 180.0001).valid).toBe(false);
+    expect(validateCoordinates(0, -180.0001).valid).toBe(false);
+  });
+
+  it('19. Composite Trapezoidal Numerical Integration: Verifies accurate hourly mean integration over [h, h+1]', async () => {
+    const { integrateHourlyBirdHulstrom, getExtraterrestrialNormalIrradiance } = await import(
+      '../services/physicsEngine'
+    );
+
+    // Day 172 (June 21, Summer Solstice) in Paris (lat 48.836, lon 2.336)
+    const dayOfYear = 172;
+    const i0 = getExtraterrestrialNormalIrradiance(dayOfYear);
+
+    // Midday hour [12, 13] UTC: solar elevation is high (~64°)
+    const noonHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 12, i0);
+    expect(noonHour.ghiIntegrated).toBeGreaterThan(700);
+    expect(noonHour.dniIntegrated).toBeGreaterThan(750);
+    expect(noonHour.midpointElevationDeg).toBeGreaterThan(60);
+
+    // Midnight hour [00, 01] UTC: sun is well below horizon, integrated irradiance must be 0
+    const midnightHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 0, i0);
+    expect(midnightHour.ghiIntegrated).toBe(0);
+    expect(midnightHour.dniIntegrated).toBe(0);
+    expect(midnightHour.dhiIntegrated).toBe(0);
+
+    // Sunrise hour [04, 05] UTC (sun rises during this hour):
+    // Numerical integration accounts for the fractional illumination smoothly
+    const dawnHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 4, i0);
+    expect(dawnHour.ghiIntegrated).toBeGreaterThanOrEqual(0);
+    expect(dawnHour.ghiIntegrated).toBeLessThan(noonHour.ghiIntegrated);
+  });
+
+  it('20. Meteorological Temperature vs Simulated Proxy Safety: Verifies no false weather claims', async () => {
+    const { calculateClientSolar24h } = await import('../services/solarCalculator');
+    const { generateScientificSolarDay } = await import('../services/physicsEngine');
+
+    // 1. Client-side simulation
+    const clientDay = calculateClientSolar24h(43.296, 5.37, '2026-07-15', 'Marseille');
+    for (const pt of clientDay.hourly) {
+      // temperature MUST NOT be set for theoretical simulation
+      expect(pt.temperature).toBeUndefined();
+      // ambient_temperature_proxy_c is clearly provided as a proxy
+      expect(pt.ambient_temperature_proxy_c).toBeDefined();
+      expect(pt.temperature_is_forecast).toBe(false);
+      expect(pt.temperature_note).toContain('Proxy');
+    }
+
+    // 2. Physics engine day generator with model_clearsky source
+    const physDay = generateScientificSolarDay(43.296, 5.37, '2026-07-15', 'Marseille', 'model_clearsky_spencer_bird');
+    for (const pt of physDay.hourly) {
+      expect(pt.temperature_c).toBeUndefined();
+      expect(pt.ambient_temperature_proxy_c).toBeDefined();
+    }
+  });
+
+  it('21. Astronomical Reference Situations: Equinoxes, Solstices, Equator and Polar Extremes', async () => {
+    const { generateScientificSolarDay } = await import('../services/physicsEngine');
+
+    // Equator (0° lat, 0° lon) on March 21 (Equinox):
+    // Max elevation reaches ~84.5° at mid-hour interval (and ~90° at solar noon)
+    const equatorEquinox = generateScientificSolarDay(0, 0, '2026-03-21', 'Équateur');
+    expect(equatorEquinox.max_solar_elevation_deg).toBeGreaterThan(83);
+    expect(equatorEquinox.sunshine_hours_wmo).toBeGreaterThanOrEqual(10);
+
+    // North Pole (90° N, 0° lon) on Summer Solstice (June 21):
+    // Polar day: elevation stays around ~23.4° all 24 hours, sun never sets
+    const northPoleSummer = generateScientificSolarDay(89.5, 0, '2026-06-21', 'Pôle Nord');
+    expect(northPoleSummer.max_solar_elevation_deg).toBeGreaterThan(22);
+    // Daylight continuously across all 24 hours
+    const daylightHours = northPoleSummer.hourly.filter((h) => h.ghi_w_m2 > 0).length;
+    expect(daylightHours).toBe(24);
+
+    // North Pole on Winter Solstice (Dec 21):
+    // Polar night: sun never rises, all GHI must be 0
+    const northPoleWinter = generateScientificSolarDay(89.5, 0, '2026-12-21', 'Pôle Nord Hiver');
+    expect(northPoleWinter.daily_ghi_kwh_m2).toBe(0);
+    expect(northPoleWinter.hourly.every((h) => h.ghi_w_m2 === 0)).toBe(true);
+  });
 });

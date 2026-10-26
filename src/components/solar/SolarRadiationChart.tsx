@@ -327,11 +327,23 @@ export const SolarRadiationChart: React.FC = () => {
         </div>
 
         {/* Provenance & Cache Badge */}
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {radiationData?.source === 'pvgis_jrc_sarah2' && !radiationData?.is_simulated ? (
+            <span className="text-[11px] font-mono text-emerald-300 bg-emerald-950/70 border border-emerald-800/60 px-2.5 py-1 rounded flex items-center gap-1.5" title="Données satellitaires réelles PVGIS SARAH-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>PVGIS SARAH-2 (Satellitaire)</span>
+            </span>
+          ) : (
+            <span className="text-[11px] font-mono text-amber-300 bg-amber-950/70 border border-amber-800/60 px-2.5 py-1 rounded flex items-center gap-1.5" title="Modèle théorique ciel clair Spencer & Bird (intégration composite)">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>Spencer & Bird (Simulation)</span>
+            </span>
+          )}
+
           {cacheStatus === 'fresh' && (
-            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded flex items-center gap-1.5" title="Données récupérées en direct depuis le serveur PVGIS JRC">
+            <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded flex items-center gap-1.5" title="Données récupérées en direct">
               <Zap className="w-3 h-3 text-emerald-400" />
-              <span>En direct PVGIS JRC</span>
+              <span>En direct</span>
             </span>
           )}
           {cacheStatus === 'cached' && (
@@ -925,12 +937,17 @@ export const SolarRadiationChart: React.FC = () => {
                 DHI: <strong className="text-sky-300 tabular-nums">{hoveredPoint.dhi} W/m²</strong>
               </span>
 
-              {hoveredPoint.temperature !== undefined && (
-                <span className="text-slate-400" title="Proxy physique indicatif d’ambiance locale (non issu d’une station ou prévision météo)">
-                  T° proxy : <strong className="text-slate-200">{hoveredPoint.temperature}°C</strong>
-                  <span className="text-[10px] text-slate-500 ml-1 font-sans">(non météo)</span>
+              {hoveredPoint.temperature !== undefined && hoveredPoint.temperature !== null ? (
+                <span className="text-slate-400" title="Température de l’air à 2m (T2m) issue de la réanalyse météorologique ERA5 / PVGIS">
+                  T2m météo : <strong className="text-slate-200 tabular-nums">{hoveredPoint.temperature}°C</strong>
+                  <span className="text-[10px] text-emerald-400/90 ml-1 font-sans">(ERA5)</span>
                 </span>
-              )}
+              ) : hoveredPoint.ambient_temperature_proxy_c !== undefined ? (
+                <span className="text-slate-400" title="Proxy physique indicatif théorique (non issu d’une station ou prévision météo)">
+                  T° proxy : <strong className="text-slate-200 tabular-nums">{hoveredPoint.ambient_temperature_proxy_c}°C</strong>
+                  <span className="text-[10px] text-amber-400/80 ml-1 font-sans">(proxy indicatif, non météo)</span>
+                </span>
+              ) : null}
             </div>
           </div>
         )}

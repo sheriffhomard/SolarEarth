@@ -306,7 +306,89 @@ export function calculateBirdHulstromClearSky(
 }
 
 /**
- * Generates a normalized 24h astronomical Clear-Sky observation series for any coordinate on Earth.
+ * Computes numerically integrated hourly solar radiation for hour interval [h, h+1] UTC
+ * using 4-subinterval composite trapezoidal rule (evaluating at t = 0m, 15m, 30m, 45m, 60m).
+ * This ensures that sunrise/sunset hours with partial sunlight are accurately integrated
+ * rather than sampled at a single instantaneous point.
+ */
+export function integrateHourlyBirdHulstrom(
+  latitudeDeg: number,
+  longitudeDeg: number,
+  dayOfYear: number,
+  hourUtc: number, // 0 to 23
+  i0Normal: number,
+  atmosphericInputs: BirdHulstromAtmosphericInputs = {}
+): {
+  ghiIntegrated: number;
+  dniIntegrated: number;
+  dhiIntegrated: number;
+  midpointElevationDeg: number;
+  midpointAzimuthDeg: number;
+  midpointZenithDeg: number;
+  trueSolarTimeMinutes: number;
+} {
+  const subIntervals = [0.0, 0.25, 0.5, 0.75, 1.0];
+  const weights = [0.5, 1.0, 1.0, 1.0, 0.5]; // Trapezoidal weights for delta_t = 0.25 h
+
+  let ghiSum = 0;
+  let dniSum = 0;
+  let dhiSum = 0;
+
+  let midpointElevation = 0;
+  let midpointAzimuth = 0;
+  let midpointZenith = 0;
+  let midpointTst = 0;
+
+  for (let i = 0; i < subIntervals.length; i++) {
+    const fraction = subIntervals[i];
+    const t = hourUtc + fraction;
+    const angles = calculateSolarAngles(latitudeDeg, longitudeDeg, dayOfYear, t);
+
+    if (fraction === 0.5) {
+      midpointElevation = angles.elevationDeg;
+      midpointAzimuth = angles.azimuthDeg;
+      midpointZenith = angles.zenithDeg;
+
+      const { equationOfTimeMin } = getSolarAstronomicalParameters(dayOfYear, t);
+      const timeOffsetMin = equationOfTimeMin + 4 * longitudeDeg;
+      midpointTst = (t * 60 + timeOffsetMin + 1440 * 2) % 1440;
+    }
+
+    let subGhi = 0;
+    let subDni = 0;
+    let subDhi = 0;
+
+    if (angles.elevationDeg > 0) {
+      const bird = calculateBirdHulstromClearSky(i0Normal, angles.zenithDeg, atmosphericInputs);
+      subGhi = bird.ghi;
+      subDni = bird.dni;
+      subDhi = bird.dhi;
+    }
+
+    const w = weights[i];
+    ghiSum += subGhi * w;
+    dniSum += subDni * w;
+    dhiSum += subDhi * w;
+  }
+
+  const ghiIntegrated = Math.round((ghiSum / 4.0) * 10) / 10;
+  const dniIntegrated = Math.round((dniSum / 4.0) * 10) / 10;
+  const dhiIntegrated = Math.round((dhiSum / 4.0) * 10) / 10;
+
+  return {
+    ghiIntegrated,
+    dniIntegrated,
+    dhiIntegrated,
+    midpointElevationDeg: midpointElevation,
+    midpointAzimuthDeg: midpointAzimuth,
+    midpointZenithDeg: midpointZenith,
+    trueSolarTimeMinutes: Math.round(midpointTst * 10) / 10,
+  };
+}
+
+/**
+ * Generates a normalized 24h astronomical Clear-Sky observation series for any coordinate on Earth
+ * with true hourly numerical integration over [h, h+1] UTC.
  */
 export function generateScientificSolarDay(
   latitude: number,
@@ -314,7 +396,15 @@ export function generateScientificSolarDay(
   dateStr: string,
   locationName?: string,
   sourceCode: 'pvgis_jrc' | 'model_clearsky_spencer_bird' = 'model_clearsky_spencer_bird',
-  cacheStatus: CacheFreshnessStatus = 'fallback_model'
+  cacheStatus: CacheFreshnessStatus = 'fallback_model',
+  atmosphericInputs: BirdHulstromAtmosphericInputs = {
+    pressureRatio: 1.0,
+    ozoneCmAtm: 0.34,
+    precipitableWaterCm: 1.5,
+    aerosolOpticalDepth500: 0.10,
+    groundAlbedo: 0.20,
+    forwardScatterFraction: 0.84,
+  }
 ): UnifiedSolarObservationRecord {
   const parts = dateStr.split('-').map(Number);
   const year = parts[0] || new Date().getFullYear();
@@ -332,35 +422,39 @@ export function generateScientificSolarDay(
   let extraterrestrialHorizontalWh = 0;
 
   for (let hour = 0; hour < 24; hour++) {
-    const { elevationDeg, azimuthDeg, zenithDeg } = calculateSolarAngles(latitude, longitude, dayOfYear, hour);
+    // True numerical integration over [hour, hour + 1] UTC
+    const integrated = integrateHourlyBirdHulstrom(
+      latitude,
+      longitude,
+      dayOfYear,
+      hour,
+      i0,
+      atmosphericInputs
+    );
 
-    let ghi = 0;
-    let dni = 0;
-    let dhi = 0;
+    const ghi = integrated.ghiIntegrated;
+    const dni = integrated.dniIntegrated;
+    const dhi = integrated.dhiIntegrated;
+    const elevationDeg = integrated.midpointElevationDeg;
+    const azimuthDeg = integrated.midpointAzimuthDeg;
+
     let kt: number | undefined = undefined;
-
     if (elevationDeg > 0) {
-      const birdResult = calculateBirdHulstromClearSky(i0, zenithDeg, {
-        pressureRatio: 1.0,
-        ozoneCmAtm: 0.34,
-        precipitableWaterCm: 1.5,
-        aerosolOpticalDepth500: 0.10,
-        groundAlbedo: 0.20,
-      });
-
-      dni = birdResult.dni;
-      dhi = birdResult.dhi;
-      ghi = birdResult.ghi;
-
       const sinEl = Math.sin((elevationDeg * Math.PI) / 180);
       const i0Horizontal = i0 * sinEl;
       extraterrestrialHorizontalWh += i0Horizontal;
       kt = i0Horizontal > 10 ? Math.round((ghi / i0Horizontal) * 100) / 100 : 0;
     }
 
-    const temp = Math.round((14 + 7 * Math.sin(Math.max(0, (elevationDeg * Math.PI) / 180)) + 3 * Math.cos((latitude * Math.PI) / 180)) * 10) / 10;
+    // Explicit illustrative temperature proxy - NOT a weather data point
+    const tempProxy = Math.round(
+      (14 +
+        7 * Math.sin(Math.max(0, (elevationDeg * Math.PI) / 180)) +
+        3 * Math.cos((latitude * Math.PI) / 180)) *
+        10
+    ) / 10;
 
-    // Physical sanity check
+    // Physical sanity check on integrated values
     const validation = validatePhysicalIrradiance(ghi, dni, dhi, elevationDeg);
     if (!validation.isValid) {
       warnings.push(`Heure ${hour}h: ${validation.violations.join('; ')}`);
@@ -374,7 +468,9 @@ export function generateScientificSolarDay(
       dhi_w_m2: dhi,
       solar_elevation_deg: elevationDeg,
       solar_azimuth_deg: azimuthDeg,
-      temperature_c: temp,
+      // For model simulation, temperature_c is intentionally undefined to avoid false weather claims
+      temperature_c: sourceCode === 'pvgis_jrc' ? tempProxy : undefined,
+      ambient_temperature_proxy_c: tempProxy,
       clearness_index_kt: kt,
       quality_flag: sourceCode === 'pvgis_jrc' ? 'satellite_validated' : 'model_clearsky',
     });

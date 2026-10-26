@@ -78,6 +78,7 @@ export interface CommonHourlyObservation {
   solar_elevation_deg: number;
   solar_azimuth_deg?: number;
   temperature_c?: number;
+  ambient_temperature_proxy_c?: number;
   clearness_index_kt?: number;
   quality_flag: QualityFlag;
 }

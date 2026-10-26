@@ -184,33 +184,49 @@ export async function fetchHourlyRadiation(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data: HourlyRadiationResponse = await res.json();
 
-    const provenance = data.provenance || generateScientificProvenance(
-      normLat,
-      normLon,
-      targetDate,
-      data.daily_irradiation_kwh,
-      data.peak_ghi,
-      data.peak_dni,
-      data.sunshine_hours,
-      'pvgis_jrc_sarah2'
-    );
+    const isSimulated = Boolean(data.is_simulated || data.source?.includes('simulated'));
+    const effectiveSource = isSimulated ? 'simulated_clearsky_model' : 'pvgis_jrc_sarah2';
+
+    const provenance =
+      data.provenance ||
+      generateScientificProvenance(
+        normLat,
+        normLon,
+        targetDate,
+        data.daily_irradiation_kwh,
+        data.peak_ghi,
+        data.peak_dni,
+        data.sunshine_hours,
+        effectiveSource
+      );
 
     const result: HourlyRadiationResponse = {
       ...data,
+      source: data.source || (isSimulated ? 'simulated_clearsky_spencer_bird' : 'pvgis_jrc_sarah2'),
+      is_simulated: isSimulated,
       location_name: locationName || data.location_name || `${normLat}°, ${normLon}°`,
       cached: false,
-      cache_status: 'fresh',
+      cache_status: data.cache_status || 'fresh',
       cache_timestamp_utc: new Date().toISOString(),
-      product_name: 'PVGIS-SARAH2 / JRC European Commission',
-      product_version: 'v5.3',
+      product_name:
+        data.product_name ||
+        (isSimulated
+          ? 'Modèle Solaire Ciel Clair (Simulation Locale - Hors-Ligne)'
+          : 'PVGIS-SARAH2 / JRC European Commission'),
+      product_version: data.product_version || (isSimulated ? 'v2.0 (Spencer / Bird)' : 'v5.3'),
+      warning:
+        data.warning ||
+        (isSimulated
+          ? 'DONNÉES SIMULÉES : Calculées par le modèle théorique Spencer & Bird. Ces données ne proviennent pas des satellites PVGIS JRC.'
+          : undefined),
       provenance,
     };
 
-    // Store in scientific cache with 24h fresh TTL, 7 days stale fallback
+    // Store in scientific cache with appropriate provider tier
     scientificCache.set(
       cacheKey,
       result,
-      'pvgis_jrc',
+      isSimulated ? 'model_clearsky' : 'pvgis_jrc',
       CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_FRESH_MS,
       CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_MAX_STALE_MS
     );
