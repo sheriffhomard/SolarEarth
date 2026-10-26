@@ -42,9 +42,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 serviceStatus === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{serviceStatus === 'ok' ? 'Mode Téléphone Autonome' : 'Initialisation'}</span>
-            <span className="text-slate-600" aria-hidden="true">·</span>
-            <span className="text-slate-400">IndexedDB & SQLite Local</span>
+            <span className="text-slate-400">PWA : IndexedDB Local</span>
+            <span className="text-slate-600 hidden lg:inline" aria-hidden="true">·</span>
+            <span className="text-slate-400 hidden lg:inline">Station Dev : SQLite</span>
           </div>
 
           <PWAInstallPrompt />

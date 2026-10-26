@@ -4,6 +4,7 @@ import {
   ScientificProvenance,
   AtmosphericModelParameters,
 } from '../types';
+import { calculateBirdHulstromClearSky } from './physicsEngine';
 
 /**
  * Validates whether a given Gregorian year is a leap year.
@@ -170,7 +171,7 @@ export const DEFAULT_ATMOSPHERIC_PARAMETERS: AtmosphericModelParameters = {
   validity_limits: [
     'Applicable uniquement sous ciel rigoureusement dégagé (sans nébulosité nuageuse ni brume dense).',
     'Élévation solaire strictement positive (alpha > 0°). Irradiance nulle la nuit (alpha <= 0°).',
-    'Incertitude type estimée du modèle physique ciel clair : +/- 5% à 8% par rapport aux pyranomètres ISO 9060.',
+    'Incertitude typique d’un modèle ciel clair non étalonné in situ : ± 5% à 10% (selon la variabilité des aérosols et de la vapeur d’eau) ; non garantie sans campagne d’étalonnage métrologique locale.',
     'La température calculée est un proxy d’échauffement physique local indicatif, et non une mesure ou prévision météo.',
   ],
 };
@@ -500,21 +501,19 @@ export function calculateClientSolar24h(
         0.00128 * Math.sin(theta0) +
         0.000719 * Math.cos(2 * theta0);
       const i0 = 1361.2 * ecc;
-
-      const sinEl = Math.sin(elevationRad);
       const zenithDeg = 90 - elevationDeg;
-      const airMass = Math.max(
-        1.0,
-        Math.min(30.0, 1.0 / (sinEl + 0.50572 * Math.pow(96.07995 - zenithDeg, -1.6364)))
-      );
 
-      // Atmospheric optical transmittance
-      const tauBeam = Math.exp(-0.165 * airMass);
-      const tauDiff = 0.082 + 0.038 * sinEl;
+      const bird = calculateBirdHulstromClearSky(i0, zenithDeg, {
+        pressureRatio: 1.0,
+        ozoneCmAtm: 0.34,
+        precipitableWaterCm: 1.5,
+        aerosolOpticalDepth500: 0.10,
+        groundAlbedo: 0.20,
+      });
 
-      dni = Math.max(0, Math.min(1080, Math.round(i0 * tauBeam * 10) / 10));
-      dhi = Math.max(0, Math.min(320, Math.round(i0 * sinEl * tauDiff * 10) / 10));
-      ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
+      dni = bird.dni;
+      dhi = bird.dhi;
+      ghi = bird.ghi;
     }
 
     // 3. TEMPERATURE PROXY (Explicitly marked as non-forecast illustrative proxy)

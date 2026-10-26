@@ -47,7 +47,7 @@ export const DashboardPage: React.FC = () => {
             </h1>
             <p className="mt-2 text-sm text-slate-400 max-w-2xl leading-relaxed">
               Mesure, calcul et visualisation du rayonnement solaire reçu sur Terre au cours de la
-              journée. Fonctionnement 100% autonome sur smartphone : moteur solaire embarqué, décomposition GHI / DNI / DHI sur 24h et stockage local IndexedDB & SQLite.
+              journée. Double mode architectural : PWA 100% autonome sur smartphone avec base <strong>IndexedDB</strong>, ou station locale développeur avec base <strong>SQLite</strong>.
             </p>
           </div>
 
@@ -55,12 +55,12 @@ export const DashboardPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 text-xs font-mono text-slate-400 bg-slate-900/90 border border-slate-800 p-3 rounded-lg">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4 text-emerald-400" />
-              <span>Mode Téléphone PWA</span>
+              <span>PWA Smartphone : IndexedDB</span>
             </div>
             <span className="hidden sm:inline text-slate-700" aria-hidden="true">|</span>
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-sky-400" />
-              <span>IndexedDB & SQLite Local</span>
+              <span>Station Dev : SQLite (solar_earth.db)</span>
             </div>
           </div>
         </div>
@@ -317,49 +317,71 @@ export const DashboardPage: React.FC = () => {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 font-mono">
-                <th className="py-2.5 px-3">Fournisseur</th>
-                <th className="py-2.5 px-3">Organisme</th>
+                <th className="py-2.5 px-3">Domaine & Source</th>
+                <th className="py-2.5 px-3">Organisme & Type</th>
                 <th className="py-2.5 px-3">Version Cible</th>
-                <th className="py-2.5 px-3">État V0.2</th>
-                <th className="py-2.5 px-3">Paramètres Prévus</th>
+                <th className="py-2.5 px-3">État Opérationnel</th>
+                <th className="py-2.5 px-3">Variables Fournies</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 text-slate-300">
+              {/* Category 1: Surface Solar Radiation */}
+              <tr className="bg-amber-950/20">
+                <td colSpan={5} className="py-2 px-3 font-mono font-bold text-amber-300 text-[11px] uppercase tracking-wider">
+                  1. Rayonnement Solaire de Surface (GHI, DNI, DHI — Irradiance au sol)
+                </td>
+              </tr>
               <tr className="bg-amber-950/10">
-                <td className="py-3 px-3 font-semibold text-amber-300">PVGIS</td>
-                <td className="py-3 px-3 text-slate-300">Commission Européenne JRC</td>
+                <td className="py-3 px-3 font-semibold text-amber-300">PVGIS (JRC)</td>
+                <td className="py-3 px-3 text-slate-300">Commission Européenne JRC (Satellites MSG/SARAH-2)</td>
                 <td className="py-3 px-3 font-mono text-emerald-400">V0.2 (Actif)</td>
                 <td className="py-3 px-3">
-                  <span className="font-mono text-emerald-400 font-medium">activé (PVGIS v5.3 + Cache)</span>
+                  <span className="font-mono text-emerald-400 font-medium">activé (API v5.3 + Cache local)</span>
                 </td>
                 <td className="py-3 px-3 text-slate-300 font-mono">GHI, DNI, DHI, Hauteur solaire, T2m</td>
               </tr>
               <tr>
+                <td className="py-3 px-3 font-medium text-slate-200">Modèle Bird & Hulstrom</td>
+                <td className="py-3 px-3 text-slate-400">SERI 1981 / Spencer 1971 (Modèle physique Ciel Clair)</td>
+                <td className="py-3 px-3 font-mono text-emerald-400">V0.2 (Embarqué)</td>
+                <td className="py-3 px-3">
+                  <span className="font-mono text-emerald-400 font-medium">actif (hors-ligne 100% autonome)</span>
+                </td>
+                <td className="py-3 px-3 text-slate-400 font-mono">GHI, DNI, DHI, Décomposition spectrale</td>
+              </tr>
+              <tr>
                 <td className="py-3 px-3 font-medium text-slate-200">NASA POWER</td>
-                <td className="py-3 px-3 text-slate-400">NASA Langley Research Center</td>
+                <td className="py-3 px-3 text-slate-400">NASA Langley (Satellites CERES / Réanalyses MERRA-2)</td>
                 <td className="py-3 px-3 font-mono text-amber-400">V0.3</td>
                 <td className="py-3 px-3">
-                  <span className="font-mono text-slate-500">simulé (modèle calibré)</span>
+                  <span className="font-mono text-slate-500">simulé (modèle calibré mondial)</span>
                 </td>
                 <td className="py-3 px-3 text-slate-400 font-mono">Irradiance mondiale, Température, TMY</td>
               </tr>
               <tr>
-                <td className="py-3 px-3 font-medium text-slate-200">NOAA SWPC</td>
-                <td className="py-3 px-3 text-slate-400">Space Weather Prediction Center</td>
-                <td className="py-3 px-3 font-mono text-amber-400">V0.4</td>
-                <td className="py-3 px-3">
-                  <span className="font-mono text-slate-500">simulé (placeholder)</span>
-                </td>
-                <td className="py-3 px-3 text-slate-400 font-mono">F10.7, Kp index, Dst, Éruptions solaires</td>
-              </tr>
-              <tr>
                 <td className="py-3 px-3 font-medium text-slate-200">EUMETSAT</td>
-                <td className="py-3 px-3 text-slate-400">Organisation Européenne Satellites Météo</td>
+                <td className="py-3 px-3 text-slate-400">Organisation Européenne Satellites Météo (SARAH-3)</td>
                 <td className="py-3 px-3 font-mono text-amber-400">V0.7</td>
                 <td className="py-3 px-3">
                   <span className="font-mono text-slate-500">indisponible (non configuré)</span>
                 </td>
-                <td className="py-3 px-3 text-slate-400 font-mono">Produits SARAH-3, MTG/FCI, Albédo nuageux</td>
+                <td className="py-3 px-3 text-slate-400 font-mono">Produits SARAH-3, Albédo nuageux</td>
+              </tr>
+
+              {/* Category 2: Space Weather */}
+              <tr className="bg-sky-950/20">
+                <td colSpan={5} className="py-2 px-3 font-mono font-bold text-sky-300 text-[11px] uppercase tracking-wider">
+                  2. Météorologie Spatiale & Ionosphère (Contexte héliophysique — Non substituable au rayonnement de surface)
+                </td>
+              </tr>
+              <tr>
+                <td className="py-3 px-3 font-medium text-slate-200">NOAA SWPC</td>
+                <td className="py-3 px-3 text-slate-400">Space Weather Prediction Center (Couronne & Magnétosphère)</td>
+                <td className="py-3 px-3 font-mono text-amber-400">V0.4</td>
+                <td className="py-3 px-3">
+                  <span className="font-mono text-sky-400">intégré (flux héliophysique)</span>
+                </td>
+                <td className="py-3 px-3 text-slate-400 font-mono">F10.7 (sfu), Kp index, Dst (nT), Rayons X GOES</td>
               </tr>
             </tbody>
           </table>

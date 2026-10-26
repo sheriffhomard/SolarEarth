@@ -197,6 +197,114 @@ export function calculateSunshineDurationHours(hourlyDni: number[]): number {
   return hourlyDni.reduce((count, dni) => (dni >= WMO_SUNSHINE_THRESHOLD_DNI ? count + 1.0 : count), 0);
 }
 
+export interface BirdHulstromAtmosphericInputs {
+  pressureRatio?: number; // P / P0, default 1.0 (sea level standard)
+  ozoneCmAtm?: number; // lo in cm-atm, default 0.34 (340 Dobson Units)
+  precipitableWaterCm?: number; // w in cm, default 1.5 cm
+  aerosolOpticalDepth500?: number; // tau_a at 500nm, default 0.10 (clear continental atmosphere)
+  groundAlbedo?: number; // rho_g, default 0.20
+  forwardScatterFraction?: number; // F, default 0.84
+}
+
+export interface BirdHulstromTransmittances {
+  dni: number;
+  dhi: number;
+  ghi: number;
+  rayleighTransmittance: number;
+  ozoneTransmittance: number;
+  gasesTransmittance: number;
+  waterVaporTransmittance: number;
+  aerosolTransmittance: number;
+  airMass: number;
+}
+
+/**
+ * Authentic Bird & Hulstrom (1981) SERI Clear Sky Model for Direct and Diffuse Insolation.
+ * Reference: Bird, R.E. and Hulstrom, R.L. (1981), SERI/TR-642-761.
+ */
+export function calculateBirdHulstromClearSky(
+  i0Normal: number,
+  zenithDeg: number,
+  inputs: BirdHulstromAtmosphericInputs = {}
+): BirdHulstromTransmittances {
+  if (zenithDeg >= 90 || zenithDeg < 0) {
+    return {
+      dni: 0,
+      dhi: 0,
+      ghi: 0,
+      rayleighTransmittance: 0,
+      ozoneTransmittance: 0,
+      gasesTransmittance: 0,
+      waterVaporTransmittance: 0,
+      aerosolTransmittance: 0,
+      airMass: 0,
+    };
+  }
+
+  const cosZenith = Math.cos((zenithDeg * Math.PI) / 180);
+  const pRatio = inputs.pressureRatio ?? 1.0;
+  const lo = inputs.ozoneCmAtm ?? 0.34;
+  const w = inputs.precipitableWaterCm ?? 1.5;
+  const tauA = inputs.aerosolOpticalDepth500 ?? 0.10;
+  const rhoG = inputs.groundAlbedo ?? 0.20;
+  const F = inputs.forwardScatterFraction ?? 0.84;
+
+  // 1. Air Mass (Kasten & Young 1989 formulation)
+  const am = 1.0 / (cosZenith + 0.50572 * Math.pow(Math.max(0.01, 96.07995 - zenithDeg), -1.6364));
+  const amPressure = am * pRatio;
+
+  // 2. Ozone Transmittance (To)
+  const u3 = lo * am;
+  const to =
+    1.0 -
+    0.1611 * u3 * Math.pow(1.0 + 139.48 * u3, -0.3035) -
+    (0.002715 * u3) / (1.0 + 0.044 * u3 + 0.0003 * u3 * u3);
+
+  // 3. Uniformly Mixed Gases Transmittance (Tg)
+  const tg = Math.exp(-0.0127 * Math.pow(amPressure, 0.26));
+
+  // 4. Water Vapor Transmittance (Tw)
+  const u1 = w * amPressure;
+  const tw = 1.0 - (2.4959 * u1) / (Math.pow(1.0 + 79.034 * u1, 0.6828) + 6.385 * u1);
+
+  // 5. Rayleigh Scattering Transmittance (Tr)
+  const tr = Math.exp(
+    -0.0903 * Math.pow(amPressure, 0.84) * (1.0 + amPressure - Math.pow(amPressure, 1.01))
+  );
+
+  // 6. Aerosol Extinction Transmittance (Ta)
+  const ta = Math.exp(
+    -Math.pow(tauA, 0.873) * (1.0 + tauA - Math.pow(tauA, 0.7088)) * Math.pow(am, 0.9108)
+  );
+
+  // 7. Direct Normal Irradiance (DNI)
+  // 0.9662 factor covers the 0.3 to 3.0 um spectrum in Bird & Hulstrom (1981)
+  const dni = Math.max(0, 0.9662 * i0Normal * tr * to * tg * tw * ta);
+
+  // 8. Diffuse Components (Rayleigh, Aerosol forward scattering, and Ground-Atmosphere multiple reflections)
+  const denom = Math.max(0.1, 1.0 - am + Math.pow(am, 1.02));
+  const idr = (0.79 * i0Normal * cosZenith * to * tg * tw * 0.5 * (1.0 - tr)) / denom;
+  const ida = (0.79 * i0Normal * cosZenith * to * tg * tw * tr * F * (1.0 - ta)) / denom;
+
+  const rhoA = 0.0685 + (1.0 - F) * (1.0 - ta);
+  const idm = ((dni * cosZenith + idr + ida) * rhoG * rhoA) / (1.0 - rhoG * rhoA);
+
+  const dhi = Math.max(0, idr + ida + idm);
+  const ghi = Math.max(0, dni * cosZenith + dhi);
+
+  return {
+    dni: Math.round(dni * 10) / 10,
+    dhi: Math.round(dhi * 10) / 10,
+    ghi: Math.round(ghi * 10) / 10,
+    rayleighTransmittance: Math.round(tr * 1000) / 1000,
+    ozoneTransmittance: Math.round(to * 1000) / 1000,
+    gasesTransmittance: Math.round(tg * 1000) / 1000,
+    waterVaporTransmittance: Math.round(tw * 1000) / 1000,
+    aerosolTransmittance: Math.round(ta * 1000) / 1000,
+    airMass: Math.round(am * 100) / 100,
+  };
+}
+
 /**
  * Generates a normalized 24h astronomical Clear-Sky observation series for any coordinate on Earth.
  */
@@ -224,7 +332,7 @@ export function generateScientificSolarDay(
   let extraterrestrialHorizontalWh = 0;
 
   for (let hour = 0; hour < 24; hour++) {
-    const { elevationDeg, azimuthDeg } = calculateSolarAngles(latitude, longitude, dayOfYear, hour);
+    const { elevationDeg, azimuthDeg, zenithDeg } = calculateSolarAngles(latitude, longitude, dayOfYear, hour);
 
     let ghi = 0;
     let dni = 0;
@@ -232,23 +340,19 @@ export function generateScientificSolarDay(
     let kt: number | undefined = undefined;
 
     if (elevationDeg > 0) {
+      const birdResult = calculateBirdHulstromClearSky(i0, zenithDeg, {
+        pressureRatio: 1.0,
+        ozoneCmAtm: 0.34,
+        precipitableWaterCm: 1.5,
+        aerosolOpticalDepth500: 0.10,
+        groundAlbedo: 0.20,
+      });
+
+      dni = birdResult.dni;
+      dhi = birdResult.dhi;
+      ghi = birdResult.ghi;
+
       const sinEl = Math.sin((elevationDeg * Math.PI) / 180);
-      const zenithDeg = 90 - elevationDeg;
-
-      // Kasten-Young air mass formula
-      const airMass = Math.max(
-        1.0,
-        Math.min(30.0, 1.0 / (sinEl + 0.50572 * Math.pow(96.07995 - zenithDeg, -1.6364)))
-      );
-
-      // Atmospheric optical transmittance (Clear sky parameters)
-      const tauBeam = Math.exp(-0.165 * airMass);
-      const tauDiff = 0.082 + 0.038 * sinEl;
-
-      dni = Math.max(0, Math.min(1080, Math.round(i0 * tauBeam * 10) / 10));
-      dhi = Math.max(0, Math.min(320, Math.round(i0 * sinEl * tauDiff * 10) / 10));
-      ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
-
       const i0Horizontal = i0 * sinEl;
       extraterrestrialHorizontalWh += i0Horizontal;
       kt = i0Horizontal > 10 ? Math.round((ghi / i0Horizontal) * 100) / 100 : 0;

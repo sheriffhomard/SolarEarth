@@ -9,25 +9,35 @@ import { mobileDatabase } from './indexedDbService';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export async function fetchHealth(): Promise<HealthResponse> {
+  const clientStorageCheck = await mobileDatabase.checkHealth();
+
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return data;
+    const serverData: HealthResponse = await res.json();
+    return {
+      ...serverData,
+      components: {
+        ...(serverData.components || {}),
+        client_indexeddb: clientStorageCheck.verified
+          ? `IndexedDB vérifié sur smartphone (${clientStorageCheck.locationCount} stations, ${clientStorageCheck.recordCount} calculs)`
+          : 'IndexedDB non initialisé / mémoire de secours',
+      },
+    };
   } catch {
     // Real component verification on the client / offline smartphone environment
-    const storageCheck = await mobileDatabase.checkHealth();
     return {
-      status: storageCheck.verified ? 'ok' : 'degraded',
+      status: clientStorageCheck.verified ? 'ok' : 'degraded',
       service: 'solar-earth-api',
       version: APP_ENV_CONFIG.APP_VERSION,
-      database: storageCheck.message,
-      database_verified: storageCheck.verified,
+      database: clientStorageCheck.message,
+      database_verified: clientStorageCheck.verified,
       timestamp: new Date().toISOString(),
       components: {
-        client_persistence: storageCheck.type === 'indexeddb'
-          ? `IndexedDB (Vérifiée: ${storageCheck.locationCount} stations, ${storageCheck.recordCount} calculs)`
-          : 'Mémoire vive de secours (Non persistante)',
+        client_persistence:
+          clientStorageCheck.type === 'indexeddb'
+            ? `IndexedDB (Vérifiée: ${clientStorageCheck.locationCount} stations, ${clientStorageCheck.recordCount} calculs)`
+            : 'Mémoire vive de secours (Non persistante)',
         solar_physics_engine: 'Spencer 1971 / Bird & Hulstrom 1981 (Opérationnel)',
         pvgis_provider: 'available (avec repli local autonome)',
       },

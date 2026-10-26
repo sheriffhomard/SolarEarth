@@ -79,37 +79,78 @@ function devApiPlugin(): Plugin {
           res.setHeader('Content-Type', 'application/json');
           const rootDir = import.meta.dirname || process.cwd();
           const dbPath = path.resolve(rootDir, 'solar_earth.db');
-          const hasDbFile = fs.existsSync(dbPath);
-          let dbVerified = false;
-          let dbStatusDesc = 'Persistance sur smartphone (IndexedDB & SQLite local)';
+
+          let directoryWritable = false;
+          let databaseExists = false;
+          let databaseOpenable = false;
+          let databaseReadable = false;
 
           try {
-            if (hasDbFile) {
-              fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
-              dbVerified = true;
-              dbStatusDesc = 'Fichier SQLite 3 local vérifié et accessible en lecture/écriture';
-            } else {
-              // Directory writable check for local SQLite creation
-              fs.accessSync(rootDir, fs.constants.W_OK);
-              dbVerified = true;
-              dbStatusDesc = 'Environnement local prêt (IndexedDB sur client & SQLite local disponible)';
-            }
+            fs.accessSync(rootDir, fs.constants.W_OK);
+            directoryWritable = true;
           } catch {
-            dbVerified = false;
-            dbStatusDesc = 'Permissions restreintes sur le stockage local';
+            directoryWritable = false;
           }
+
+          databaseExists = fs.existsSync(dbPath);
+
+          if (databaseExists) {
+            try {
+              const fd = fs.openSync(dbPath, 'r');
+              databaseOpenable = true;
+              const buffer = Buffer.alloc(16);
+              const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
+              fs.closeSync(fd);
+              if (bytesRead >= 16 && buffer.toString('utf8', 0, 15) === 'SQLite format 3') {
+                databaseReadable = true;
+              }
+            } catch {
+              databaseOpenable = false;
+              databaseReadable = false;
+            }
+          }
+
+          const databaseVerified = databaseExists && databaseOpenable && databaseReadable;
+          const status = directoryWritable ? 'ok' : 'degraded';
 
           res.end(
             JSON.stringify({
-              status: dbVerified ? 'ok' : 'degraded',
+              status,
               service: 'solar-earth-api',
               version: '0.2.0',
-              database: dbStatusDesc,
-              database_verified: dbVerified,
               timestamp: new Date().toISOString(),
+              architecture: {
+                client_pwa_runtime: 'Navigateur Smartphone (IndexedDB SolarEarth_MobileDB)',
+                server_dev_runtime: 'Station de calcul locale (Node.js / Python FastAPI)',
+              },
+              storage: {
+                client_browser_storage: {
+                  type: 'indexeddb',
+                  name: 'SolarEarth_MobileDB',
+                  execution: 'client_in_browser',
+                  description: 'Stockage opérationnel sur smartphone / PWA (vérification directe dans le navigateur)',
+                },
+                server_sqlite: {
+                  directory_writable: directoryWritable,
+                  database_exists: databaseExists,
+                  database_openable: databaseOpenable,
+                  database_readable: databaseReadable,
+                  database_verified: databaseVerified,
+                  file_path: 'solar_earth.db',
+                  description: databaseVerified
+                    ? 'Fichier SQLite 3 local vérifié, accessible et en-tête valide'
+                    : databaseExists
+                    ? 'Fichier SQLite 3 présent mais non ouvrable ou corrompu'
+                    : 'Fichier SQLite 3 absent (répertoire accessible en écriture)',
+                },
+              },
+              database: databaseVerified
+                ? 'Serveur SQLite 3 vérifié + PWA IndexedDB'
+                : 'PWA IndexedDB actif (SQLite serveur non initialisé)',
+              database_verified: databaseVerified,
               components: {
-                storage_subsystem: hasDbFile ? 'sqlite3_local_file' : 'browser_indexeddb_local',
-                solar_physics_engine: 'Spencer 1971 / Bird & Hulstrom 1981 (Opérationnel)',
+                storage_subsystem: databaseVerified ? 'sqlite3_local_file' : 'browser_indexeddb_local',
+                solar_physics_engine: 'Spencer (1971) & Bird & Hulstrom (1981) SERI Model (Opérationnel)',
                 pvgis_provider: 'available (Mode calcul astronomique et repli hors-ligne actif)',
               },
             })
@@ -296,17 +337,48 @@ function devApiPlugin(): Plugin {
             let dhi = 0;
 
             if (elDeg > 0) {
-              const theta0 = (2 * Math.PI * (dayOfYear - 1)) / 365;
-              const ecc = 1.00011 + 0.034221 * Math.cos(theta0) + 0.00128 * Math.sin(theta0);
+              const theta0 = (2 * Math.PI * (dayOfYear - 1)) / 365.25;
+              const ecc = 1.00011 + 0.034221 * Math.cos(theta0) + 0.00128 * Math.sin(theta0) + 0.000719 * Math.cos(2 * theta0);
               const i0 = 1361.2 * ecc;
-              const sinEl = Math.sin(elRad);
               const zenithDeg = 90 - elDeg;
-              const airMass = Math.max(1, Math.min(30, 1 / (sinEl + 0.50572 * Math.pow(Math.max(0.1, 96.07995 - zenithDeg), -1.6364))));
-              const tauBeam = Math.exp(-0.16 * airMass);
-              const tauDiff = 0.08 + 0.04 * sinEl;
+              const cosZenith = Math.max(0.0001, Math.cos((zenithDeg * Math.PI) / 180));
+              const sinEl = Math.sin(elRad);
 
-              dni = Math.max(0, Math.round(i0 * tauBeam * 10) / 10);
-              dhi = Math.max(0, Math.round(i0 * sinEl * tauDiff * 10) / 10);
+              // Authentic Bird & Hulstrom (1981) SERI Clear Sky Model
+              const am = 1.0 / (cosZenith + 0.50572 * Math.pow(Math.max(0.01, 96.07995 - zenithDeg), -1.6364));
+              const amPressure = am * 1.0; // Sea-level standard P/P0 = 1.0
+
+              // Ozone Transmittance (To, lo = 0.34 cm-atm)
+              const u3 = 0.34 * am;
+              const to = 1.0 - 0.1611 * u3 * Math.pow(1.0 + 139.48 * u3, -0.3035) - (0.002715 * u3) / (1.0 + 0.044 * u3 + 0.0003 * u3 * u3);
+
+              // Uniformly Mixed Gases Transmittance (Tg)
+              const tg = Math.exp(-0.0127 * Math.pow(amPressure, 0.26));
+
+              // Water Vapor Transmittance (Tw, w = 1.5 cm)
+              const u1 = 1.5 * amPressure;
+              const tw = 1.0 - (2.4959 * u1) / (Math.pow(1.0 + 79.034 * u1, 0.6828) + 6.385 * u1);
+
+              // Rayleigh Scattering Transmittance (Tr)
+              const tr = Math.exp(-0.0903 * Math.pow(amPressure, 0.84) * (1.0 + amPressure - Math.pow(amPressure, 1.01)));
+
+              // Aerosol Extinction Transmittance (Ta, tau_a = 0.10)
+              const tauA = 0.10;
+              const ta = Math.exp(-Math.pow(tauA, 0.873) * (1.0 + tauA - Math.pow(tauA, 0.7088)) * Math.pow(am, 0.9108));
+
+              // Direct Normal Irradiance (DNI) with 0.9662 spectral factor
+              dni = Math.max(0, Math.round(0.9662 * i0 * tr * to * tg * tw * ta * 10) / 10);
+
+              // Diffuse Horizontal Irradiance (DHI) with forward scattering fraction F = 0.84 and albedos
+              const F = 0.84;
+              const rhoG = 0.20;
+              const rhoA = 0.0685 + (1.0 - F) * (1.0 - ta);
+              const denom = Math.max(0.1, 1.0 - am + Math.pow(am, 1.02));
+              const idr = (0.79 * i0 * cosZenith * to * tg * tw * 0.5 * (1.0 - tr)) / denom;
+              const ida = (0.79 * i0 * cosZenith * to * tg * tw * tr * F * (1.0 - ta)) / denom;
+              const idm = ((dni * cosZenith + idr + ida) * rhoG * rhoA) / (1.0 - rhoG * rhoA);
+
+              dhi = Math.max(0, Math.round((idr + ida + idm) * 10) / 10);
               ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
             }
 

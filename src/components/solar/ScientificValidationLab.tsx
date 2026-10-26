@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Database,
@@ -11,9 +11,13 @@ import {
   FileSpreadsheet,
   Globe,
   Sparkles,
+  Server,
+  HardDrive,
 } from 'lucide-react';
 import { generateScientificSolarDay, validatePhysicalIrradiance } from '../../services/physicsEngine';
 import { GLOBAL_SOLAR_BENCHMARKS } from '../../services/climateService';
+import { mobileDatabase } from '../../services/indexedDbService';
+import { fetchHealth } from '../../services/api';
 
 export const ScientificValidationLab: React.FC = () => {
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState<string>('carpentras_summer');
@@ -21,6 +25,48 @@ export const ScientificValidationLab: React.FC = () => {
   const [customLat, setCustomLat] = useState<number>(44.053);
   const [customLon, setCustomLon] = useState<number>(5.048);
   const [activeTab, setActiveTab] = useState<'comparator' | 'sources' | 'completeness' | 'export'>('comparator');
+
+  const [storageAudit, setStorageAudit] = useState<{
+    clientIndexedDb: { verified: boolean; message: string; locations: number; records: number; type: string } | null;
+    serverSqlite: {
+      directoryWritable?: boolean;
+      databaseExists?: boolean;
+      databaseOpenable?: boolean;
+      databaseReadable?: boolean;
+      databaseVerified?: boolean;
+      filePath?: string;
+      desc?: string;
+    } | null;
+  }>({ clientIndexedDb: null, serverSqlite: null });
+
+  useEffect(() => {
+    let isMounted = true;
+    Promise.all([mobileDatabase.checkHealth(), fetchHealth()]).then(([idbCheck, health]) => {
+      if (!isMounted) return;
+      const rawStorage = (health as any).storage?.server_sqlite || {};
+      setStorageAudit({
+        clientIndexedDb: {
+          verified: idbCheck.verified,
+          message: idbCheck.message,
+          locations: idbCheck.locationCount,
+          records: idbCheck.recordCount,
+          type: idbCheck.type,
+        },
+        serverSqlite: {
+          directoryWritable: rawStorage.directory_writable ?? true,
+          databaseExists: rawStorage.database_exists ?? (health.database_verified || false),
+          databaseOpenable: rawStorage.database_openable ?? (health.database_verified || false),
+          databaseReadable: rawStorage.database_readable ?? (health.database_verified || false),
+          databaseVerified: rawStorage.database_verified ?? (health.database_verified || false),
+          filePath: rawStorage.file_path || 'solar_earth.db',
+          desc: rawStorage.description || health.database,
+        },
+      });
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Selected cities for the Multi-City Comparator (Feature A)
   const [comparedCityIds, setComparedCityIds] = useState<string[]>(['paris', 'carpentras', 'madrid', 'dakar']);
@@ -305,23 +351,22 @@ export const ScientificValidationLab: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 font-mono text-xs">
             {/* PVGIS SARAH-2 */}
             <div className="p-4 bg-slate-950 border border-emerald-500/30 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-emerald-400">PVGIS SARAH-2 (JRC)</span>
+                <span className="font-bold text-emerald-400">PVGIS SARAH-2</span>
                 <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800">
-                  Disponible · v5.3
+                  Surface · v5.3
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-                Données d&apos;observation satellite géostationnaire Météosat / CM SAF combinées aux modèles de transfert
-                radiatif.
+                Observation satellite géostationnaire MSG/Météosat combinée au modèle Heliosat et réanalyse ERA5.
               </p>
               <div className="space-y-1.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
+                <div>Domaine : <strong>Rayonnement surface</strong></div>
                 <div>Résolution spatiale : <strong>0.05° (~5 km)</strong></div>
                 <div>Résolution temporelle : <strong>Horaire (UTC)</strong></div>
-                <div>Période : <strong>2005 – 2023</strong></div>
                 <div>Incertitude type : <strong>± 3.5% à 5.0%</strong></div>
               </div>
             </div>
@@ -329,19 +374,19 @@ export const ScientificValidationLab: React.FC = () => {
             {/* Clear-Sky Analytical Model */}
             <div className="p-4 bg-slate-950 border border-amber-500/30 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-amber-400">Modèle Spencer-Bird</span>
+                <span className="font-bold text-amber-400">Bird & Hulstrom (1981)</span>
                 <span className="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800">
-                  Modèle Analytique
+                  Ciel Clair SERI
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-                Formulation géométrique et atmosphérique ciel clair sans nuages (Aérologie standard ASTM / WMO).
+                Modèle physique complet : transmittances Rayleigh (Tr), Ozone (To), Gaz (Tg), Vapeur (Tw), Aérosols (Ta).
               </p>
               <div className="space-y-1.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                <div>Résolution spatiale : <strong>Continue (WGS84)</strong></div>
-                <div>Résolution temporelle : <strong>Instantanée (t)</strong></div>
-                <div>Hypothèses : <strong>AOD=0.10, O3=0.35 cm</strong></div>
-                <div>Rôle : <strong>Borne supérieure théorique</strong></div>
+                <div>Domaine : <strong>Borne physique sol</strong></div>
+                <div>Résolution spatiale : <strong>Continue WGS84</strong></div>
+                <div>Hypothèses : <strong>AOD 0.10, O3 0.34 cm</strong></div>
+                <div>Incertitude non étalonnée : <strong>± 5% à 10%</strong></div>
               </div>
             </div>
 
@@ -350,17 +395,36 @@ export const ScientificValidationLab: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sky-400">NASA POWER / CERES</span>
                 <span className="px-2 py-0.5 rounded text-[10px] bg-sky-950 text-sky-300 border border-sky-800">
-                  Simulé / API
+                  Mondial · v0.3
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-                Réanalyses atmosphériques globales MERRA-2 et radiomètres satellitaires en orbite polaire (Terra & Aqua).
+                Radiomètres spatiaux CERES (Terra & Aqua) et assimilation globale MERRA-2 du NASA Langley.
               </p>
               <div className="space-y-1.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
+                <div>Domaine : <strong>Surface planétaire</strong></div>
                 <div>Résolution spatiale : <strong>0.5° (~50 km)</strong></div>
-                <div>Résolution temporelle : <strong>Journalière & Horaire</strong></div>
-                <div>Période : <strong>1984 – Présent</strong></div>
+                <div>Résolution temporelle : <strong>Journalière / Horaire</strong></div>
                 <div>Incertitude type : <strong>± 6.0% à 8.0%</strong></div>
+              </div>
+            </div>
+
+            {/* NOAA SWPC - Space Weather */}
+            <div className="p-4 bg-slate-950 border border-purple-500/30 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-purple-400">NOAA SWPC</span>
+                <span className="px-2 py-0.5 rounded text-[10px] bg-purple-950 text-purple-300 border border-purple-800">
+                  Météo Spatiale
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                Indices coronaux et géomagnétiques (F10.7, Kp, Dst, rayons X GOES). Ne mesure pas le rayonnement au sol.
+              </p>
+              <div className="space-y-1.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
+                <div>Domaine : <strong>Héliophysique / Espace</strong></div>
+                <div>Variables : <strong>F10.7 (sfu), Kp (0-9)</strong></div>
+                <div>Finalité : <strong>Ionosphère & Aurores</strong></div>
+                <div>Statut : <strong>Données complémentaires</strong></div>
               </div>
             </div>
           </div>
@@ -503,6 +567,126 @@ export const ScientificValidationLab: React.FC = () => {
                 T_cell = T_amb + G_poa · (NOCT - 20)/800. Dérive de puissance :
                 P_dc = P_peak · (G_poa / 1000) · [1 + γ · (T_cell - 25)].
               </p>
+            </div>
+
+            {/* Storage Diagnostic Card */}
+            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                <div className="flex items-center gap-2 text-slate-100 font-bold">
+                  <Database className="w-4 h-4 text-sky-400" />
+                  <span>Contrôle de Santé du Stockage (Architecture Double Mode)</span>
+                </div>
+                <span className="text-[10px] text-slate-400">PWA vs Station Dev</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                {/* Client IndexedDB */}
+                <div className="p-3 bg-slate-900/60 rounded-lg border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sky-300 flex items-center gap-1.5">
+                      <HardDrive className="w-3.5 h-3.5 text-sky-400" />
+                      Client PWA (Smartphone)
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                        storageAudit.clientIndexedDb?.verified
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          : 'bg-amber-950 text-amber-300 border border-amber-800'
+                      }`}
+                    >
+                      {storageAudit.clientIndexedDb?.verified ? 'Vérifié Opérationnel' : 'Non Vérifié'}
+                    </span>
+                  </div>
+                  <div className="text-slate-300">
+                    Moteur : <strong>IndexedDB (SolarEarth_MobileDB)</strong>
+                  </div>
+                  <div className="text-slate-400 space-y-1">
+                    <div>Exécution : Dans le navigateur du smartphone (bac à sable local)</div>
+                    <div>
+                      Stations mémorisées :{' '}
+                      <strong className="text-slate-200">
+                        {storageAudit.clientIndexedDb?.locations ?? 0}
+                      </strong>
+                    </div>
+                    <div>
+                      Historiques de calculs :{' '}
+                      <strong className="text-slate-200">
+                        {storageAudit.clientIndexedDb?.records ?? 0}
+                      </strong>
+                    </div>
+                    <div className="text-emerald-400">100% hors-ligne &amp; zéro port réseau requis</div>
+                  </div>
+                </div>
+
+                {/* Server SQLite */}
+                <div className="p-3 bg-slate-900/60 rounded-lg border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                      <Server className="w-3.5 h-3.5 text-amber-400" />
+                      Station Développeur / Serveur
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                        storageAudit.serverSqlite?.databaseVerified
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          : storageAudit.serverSqlite?.directoryWritable
+                          ? 'bg-blue-950 text-blue-300 border border-blue-800'
+                          : 'bg-red-950 text-red-300 border border-red-800'
+                      }`}
+                    >
+                      {storageAudit.serverSqlite?.databaseVerified
+                        ? 'Base SQLite Vérifiée'
+                        : storageAudit.serverSqlite?.directoryWritable
+                        ? 'Répertoire Prêt'
+                        : 'Inaccessible'}
+                    </span>
+                  </div>
+                  <div className="text-slate-300">
+                    Fichier : <strong>{storageAudit.serverSqlite?.filePath || 'solar_earth.db'}</strong>
+                  </div>
+                  <div className="text-slate-400 space-y-1">
+                    <div>
+                      Répertoire accessible en écriture :{' '}
+                      <strong
+                        className={
+                          storageAudit.serverSqlite?.directoryWritable
+                            ? 'text-emerald-400'
+                            : 'text-red-400'
+                        }
+                      >
+                        {storageAudit.serverSqlite?.directoryWritable ? 'Oui' : 'Non'}
+                      </strong>
+                    </div>
+                    <div>
+                      Fichier SQLite existant :{' '}
+                      <strong
+                        className={
+                          storageAudit.serverSqlite?.databaseExists
+                            ? 'text-emerald-400'
+                            : 'text-slate-500'
+                        }
+                      >
+                        {storageAudit.serverSqlite?.databaseExists ? 'Oui' : 'Non'}
+                      </strong>
+                    </div>
+                    <div>
+                      Ouverture &amp; Lecture en-tête SQLite 3 :{' '}
+                      <strong
+                        className={
+                          storageAudit.serverSqlite?.databaseReadable
+                            ? 'text-emerald-400'
+                            : 'text-slate-500'
+                        }
+                      >
+                        {storageAudit.serverSqlite?.databaseReadable ? 'Conforme' : 'Non testé'}
+                      </strong>
+                    </div>
+                    <div className="text-slate-400 italic">
+                      Utilisé pour l&apos;ingestion batch et les tests CI Python/FastAPI
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

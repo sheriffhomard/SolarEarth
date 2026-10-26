@@ -9,6 +9,7 @@ import {
   calculateDailyIrradiation,
   calculateSunshineDurationHours,
   generateScientificSolarDay,
+  calculateBirdHulstromClearSky,
 } from '../services/physicsEngine';
 
 describe('Solar Physics Engine — Physical Validation & Unit Consistency (Priorité 3)', () => {
@@ -417,5 +418,48 @@ describe('Solar Physics Engine — Physical Validation & Unit Consistency (Prior
     const noonRad = estimateInstantaneousRadiation(48.85, 2.35, 172, 12);
     expect(noonRad.isDaylight).toBe(true);
     expect(noonRad.ghiWm2).toBeGreaterThan(600);
+  });
+
+  it('17. Bird & Hulstrom (1981) SERI Model: Validates atmospheric transmittances and radiative closure', () => {
+    const i0 = 1361.2;
+    const zenithDeg = 30.0; // Elevation = 60°
+
+    const result = calculateBirdHulstromClearSky(i0, zenithDeg, {
+      pressureRatio: 1.0,
+      ozoneCmAtm: 0.34,
+      precipitableWaterCm: 1.5,
+      aerosolOpticalDepth500: 0.10,
+      groundAlbedo: 0.20,
+      forwardScatterFraction: 0.84,
+    });
+
+    // 1. All transmittances must be between 0 and 1
+    expect(result.rayleighTransmittance).toBeGreaterThan(0.85);
+    expect(result.rayleighTransmittance).toBeLessThan(1.0);
+    expect(result.ozoneTransmittance).toBeGreaterThan(0.95);
+    expect(result.ozoneTransmittance).toBeLessThan(1.0);
+    expect(result.gasesTransmittance).toBeGreaterThan(0.95);
+    expect(result.gasesTransmittance).toBeLessThan(1.0);
+    expect(result.waterVaporTransmittance).toBeGreaterThan(0.80);
+    expect(result.waterVaporTransmittance).toBeLessThan(1.0);
+    expect(result.aerosolTransmittance).toBeGreaterThan(0.80);
+    expect(result.aerosolTransmittance).toBeLessThan(1.0);
+
+    // 2. DNI, DHI, GHI positivity and reasonable clear-sky values at 60° elevation
+    expect(result.dni).toBeGreaterThan(750);
+    expect(result.dni).toBeLessThan(1050);
+    expect(result.dhi).toBeGreaterThan(50);
+    expect(result.dhi).toBeLessThan(200);
+
+    // 3. Exact Radiative closure: GHI = DNI * cos(zenith) + DHI
+    const cosZenith = Math.cos((zenithDeg * Math.PI) / 180);
+    const expectedGhi = Math.round((result.dni * cosZenith + result.dhi) * 10) / 10;
+    expect(Math.abs(result.ghi - expectedGhi)).toBeLessThanOrEqual(1.0);
+
+    // 4. Night-time zeroing (zenith >= 90°)
+    const night = calculateBirdHulstromClearSky(i0, 95);
+    expect(night.dni).toBe(0);
+    expect(night.dhi).toBe(0);
+    expect(night.ghi).toBe(0);
   });
 });
