@@ -162,6 +162,13 @@ export function validateDateString(dateStr: string): { valid: boolean; error?: s
 }
 
 /**
+ * Convenience boolean predicate for calendar date validation.
+ */
+export function isValidCalendarDate(dateStr: string): boolean {
+  return validateDateString(dateStr).valid;
+}
+
+/**
  * Published Reference Benchmarks for Model Cross-Validation.
  * Compares Clear-Sky model outputs against verified scientific publications.
  */
@@ -390,6 +397,24 @@ export function generateScientificProvenance(
       expected_clear_sky_summer_solstice_kwh: b.expected_clear_sky_summer_solstice_kwh,
       expected_clear_sky_winter_solstice_kwh: b.expected_clear_sky_winter_solstice_kwh,
     })),
+    requested_date: dateStr,
+    actual_data_period: {
+      start: `${dateStr}T00:00:00Z`,
+      end: `${dateStr}T23:00:00Z`,
+    },
+    calculation_mode: isPvgis
+      ? 'Observations satellitaires géostationnaires SARAH et réanalyse ERA5'
+      : 'Intégration numérique composite (modèle SERI Bird & Hulstrom 1981)',
+    limits_and_disclaimers: isPvgis
+      ? [
+          'Données satellitaires historiques issues de PVGIS v5.3 (SARAH / ERA5).',
+          'Archive satellitaire disponible uniquement pour les années 2005 à 2023.',
+        ]
+      : [
+          'Modèle physique théorique de ciel clair (sans couverture nuageuse ni brume).',
+          'Incertitude type d’un modèle non étalonné in situ : ±5% à ±10%.',
+          'La température calculée est un proxy indicatif d’échauffement radiatif (non météo).',
+        ],
     formulas: {
       daily_irradiation: {
         name: 'Irradiation Globale Journalière',
@@ -586,9 +611,17 @@ export function calculateClientSolar24h(
     longitude,
     date: dateStr,
     source: 'simulated_clearsky_model',
+    data_type: 'simulated_clearsky',
+    requested_date: dateStr,
+    actual_data_period: {
+      start: `${dateStr}T00:00:00Z`,
+      end: `${dateStr}T23:00:00Z`,
+    },
     product_name: 'Modèle Solaire Ciel Clair (Simulation Locale Hors-ligne)',
     product_version: 'v2.0 (Spencer / Bird & Hulstrom)',
     is_simulated: true,
+    fallback_applied: true,
+    fallback_reason: 'client_local_calculation',
     warning:
       'DONNÉES SIMULÉES : Calculées par le modèle astronomique et ciel clair théorique (Spencer 1971 / Bird 1981). Ces données ne proviennent pas d’observations satellitaires réelles PVGIS JRC.',
     units: 'W/m² for irradiance, kWh/m² for irradiation',

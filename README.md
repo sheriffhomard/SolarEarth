@@ -3,10 +3,10 @@
 [![Vite](https://img.shields.io/badge/Vite-8.3.4-646CFF.svg?logo=vite&logoColor=white)](https://vite.dev/)
 [![React](https://img.shields.io/badge/React-19.0.1-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.0.2-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-24%2F24_Passed-emerald.svg?logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-44%2F44_Passed-emerald.svg?logo=vitest&logoColor=white)](https://vitest.dev/)
 [![PWA Standalone](https://img.shields.io/badge/PWA-Smartphone_Installable-5A0FC8.svg?logo=pwa&logoColor=white)](https://web.dev/progressive-web-apps/)
 [![Storage Dual-Tier](https://img.shields.io/badge/Stockage-IndexedDB_(PWA)_%26_SQLite_(Dev)-0ea5e9.svg)](https://developer.mozilla.org/fr/docs/Web/API/IndexedDB_API)
-[![CI Reproducible](https://img.shields.io/badge/CI-Frontend_%26_Backend_Pytest-success.svg)](#6-cohérence-ci-github-actions-et-reproductibilité)
+[![PVGIS Integration](https://img.shields.io/badge/PVGIS_v5.3-2005--2023_Archive-blue.svg)](https://re.jrc.ec.europa.eu/pvg_tools/en/)
 
 ---
 
@@ -40,7 +40,35 @@ Pour concilier l'autonomie totale sur smartphone et la puissance de calcul sur s
 
 ---
 
-## 2. Contrôle de Santé Réellement Fiable (Health Check Non Truqué)
+## 2. Intégration PVGIS & Rigueur sur les Dates
+
+### A. Bornes Strictes de l'Archive Satellitaire (2005–2023)
+- L'archive officielle des observations satellitaires **PVGIS SARAH-2 / SARAH-3 et ERA5** de la Commission Européenne couvre strictement les années **2005 à 2023**.
+- **Suppression définitive de la substitution silencieuse** : les versions antérieures substituaient silencieusement l'année 2020 lorsqu'une date future ou passée était demandée. Ce comportement trompeur a été totalement éliminé.
+- **Comportement actuel** :
+  - Pour toute date comprise entre 2005 et 2023 : requête effective vers l'API officielle PVGIS `seriescalc` avec la géométrie horizontale (`angle=0`, `aspect=0`, `components=1`, `pvcalculation=0`).
+  - Pour toute date postérieure à 2023 (ex: 2026) ou antérieure à 2005 : l'application indique clairement `data_type: 'simulated_clearsky'`, active le repli explicite vers le modèle astronomique Spencer & Bird (1981), attribue `actual_data_period: null`, et renseigne `fallback_applied: true` avec la justification scientifique dans `fallback_reason`.
+
+### B. Contrôle Fiable de Disponibilité PVGIS (`probePvgisStatus`)
+- L'application rejette fermement les codes HTTP 400 (Bad Request) ou 404 comme preuve de disponibilité fonctionnelle.
+- Les états sont formellement distingués :
+  - `available` : HTTP 200 avec payload JSON valide contenant `outputs.hourly`.
+  - `invalid_request` : HTTP 400 ou 404 (paramètres incorrects ou route introuvable).
+  - `unavailable` : HTTP 500, 502 ou 503 (panne serveur JRC).
+  - `timeout` : délai d'attente réseau dépassé.
+  - `unreachable` : échec de résolution DNS ou déconnexion totale.
+
+### C. Sémantique Physique des Champs PVGIS
+- `Gb(i)` : Irradiance directe reçue sur le plan horizontal ($W/m^2$).
+- `Gd(i)` : Irradiance diffuse horizontale ($DHI$, $W/m^2$).
+- `Gr(i)` : Composante réfléchie par le sol ($0\,W/m^2$ sur plan horizontal orienté vers le ciel).
+- `GHI` : Reconstitué rigoureusement par $GHI = Gb(i) + Gd(i)$.
+- `DNI` : Rayonnement direct normal, dérivé via $DNI = \frac{Gb(i)}{\sin(H_{sun})}$ lorsque la hauteur solaire $H_{sun} > 1.0^\circ$.
+- `T2m` : Température à 2 mètres issue de la réanalyse atmosphérique mondiale ERA5 du CEPMMT (distincte du proxy thermique théorique utilisé en simulation pure).
+
+---
+
+## 3. Contrôle de Santé Réellement Fiable (Health Check Non Truqué)
 
 L'application refuse tout indicateur trompeur de complaisance : la simple accessibilité d'un répertoire en écriture ne vaut **jamais** validation d'une base de données.
 
@@ -61,7 +89,7 @@ Directement dans le navigateur, une vérification indépendante teste l'API `win
 
 ---
 
-## 3. Distinction Fondamentale : Rayonnement de Surface vs Météo Spatiale
+## 4. Distinction Fondamentale : Rayonnement de Surface vs Météo Spatiale
 
 Une rigueur scientifique absolue est appliquée dans la qualification des sources de données :
 
@@ -92,9 +120,9 @@ Une rigueur scientifique absolue est appliquée dans la qualification des source
 
 ---
 
-## 4. Modèle Physique Solaire Bird & Hulstrom (1981) SERI & Incertitudes
+## 5. Modèle Physique Solaire Bird & Hulstrom (1981) SERI & Intégration Composite
 
-L'application implémente fidèlement les équations intégrales du modèle **Bird & Hulstrom (1981)** (SERI/TR-642-761), et non des approximations empiriques sommaires.
+L'application implémente fidèlement les équations intégrales du modèle **Bird & Hulstrom (1981)** (SERI/TR-642-761), avec quadrature composite trapézoïdale sur chaque heure $[h, h+1]$.
 
 ### A. Équations Physiques Implémentées
 
@@ -121,7 +149,6 @@ L'application implémente fidèlement les équations intégrales du modèle **Bi
 
 4. **Rayonnement Direct Normal ($DNI$)** :
    $$DNI = 0.9662 \cdot I_0 \cdot T_r \cdot T_o \cdot T_g \cdot T_w \cdot T_a$$
-   *(Le coefficient 0.9662 prend en compte l'intégration spectrale sur la bande 0.3 à 3.0 $\mu$m).*
 
 5. **Rayonnement Diffus Horizontal ($DHI$)** :
    Somme de la diffusion Rayleigh ($I_{dr}$), de la diffusion avant des aérosols ($I_{da}$, avec facteur $F = 0.84$), et des réflexions multiples sol-atmosphère ($I_{m}$, albédo du sol $\rho_g = 0.20$, albédo atmosphérique $\rho_a$) :
@@ -131,13 +158,13 @@ L'application implémente fidèlement les équations intégrales du modèle **Bi
    $$GHI = DNI \cdot \sin(\alpha) + DHI = DNI \cdot \cos(\theta_z) + DHI$$
 
 ### B. Qualification Honnête des Incertitudes (Non Garantie Arbitraire)
-- **Modèle ciel clair non étalonné in situ** : Présente une incertitude type typique de **$\pm 5\%$ à $10\%$** (pouvant atteindre $12\%$) due à la variabilité naturelle de l'épaisseur optique des aérosols ($\tau_a$) et de l'humidité atmosphérique ($w$). **Cette incertitude ne doit pas être considérée comme garantie à 5–8% sans étalonnage préalable par pyranomètre de référence (ISO 9060 Classe A)**.
-- **Produits satellitaires (PVGIS SARAH-2)** : Incertitude moyenne constatée de $3.5\%$ à $5.0\%$ sous ciel clair, et de $10\%$ à $15\%$ sous ciel partiellement nuageux.
+- **Modèle ciel clair non étalonné in situ** : Présente une incertitude type typique de **$\pm 5\%$ à $10\%$** (pouvant atteindre $12\%$) due à la variabilité naturelle de l'épaisseur optique des aérosols ($\tau_a$) et de l'humidité atmosphérique ($w$).
+- **Produits satellitaires (PVGIS SARAH-2 / SARAH-3)** : Incertitude moyenne constatée de $3.5\%$ à $5.0\%$ sous ciel clair, et de $10\%$ à $15\%$ sous ciel partiellement nuageux.
 - **Proxy thermique** : La température calculée est un **proxy indicatif d'échauffement radiatif local** ($T_{proxy}$), explicitement découplée de toute prévision météorologique (`temperature_is_forecast: false`).
 
 ---
 
-## 5. Benchmarks Scientifiques de Validation
+## 6. Benchmarks Scientifiques de Validation
 
 Les calculs physiques sont automatiquement vérifiés sur des situations astronomiques et des sites de référence internationaux :
 
@@ -150,14 +177,17 @@ Les calculs physiques sont automatiquement vérifiés sur des situations astrono
 
 ---
 
-## 6. Cohérence CI GitHub Actions et Reproductibilité
+## 7. Cohérence CI GitHub Actions et Reproductibilité
 
 Le workflow GitHub Actions (`.github/workflows/ci.yml`) teste les deux écosystèmes en parallèle :
 
 1. **Job `frontend` (PWA Client Autonome)** :
    - Environnement : Ubuntu Latest, Node.js 22 (`npm ci` via `package-lock.json`).
    - Typage statique strict : `npm run typecheck` (`tsc --noEmit`).
-   - Suite de tests unitaires Vitest : **24/24 tests validés** (`npm run test:run`).
+   - Suite de tests unitaires Vitest : **44/44 tests validés** (`npm run test:run`).
+     - `src/test/pvgis.test.ts` : 16 tests (disponibilité PVGIS, HTTP 400/404, limites d'archive 2005-2023, sémantique $Gb(i)$, $Gd(i)$, $H_{sun}$, endpoints de santé).
+     - `src/test/physics.test.ts` : 21 tests (équations Bird & Hulstrom, intégration horaire, masse d'air Kasten & Young, benchmarks de Carpentras/Paris/NREL/Tamanrasset).
+     - `src/test/app.test.tsx` : 7 tests (IHM, graphiques de rayonnement, badges PVGIS vs Ciel Clair).
    - Compilation de production PWA : `npm run build` (Service Worker et manifest).
 
 2. **Job `backend` (Station Développeur / Services Complémentaires)** :
@@ -168,7 +198,7 @@ Le workflow GitHub Actions (`.github/workflows/ci.yml`) teste les deux écosyst�
 
 ---
 
-## 7. Procédure de Reproduction Pas à Pas
+## 8. Procédure de Reproduction Pas à Pas
 
 ### Étape 1 : Cloner et installer les dépendances
 ```bash
@@ -186,7 +216,7 @@ npm run typecheck
 ```bash
 npm run test:run
 ```
-*Résultat attendu : 24 tests réussis (17 tests physiques/Bird & Hulstrom + 7 tests UI et navigation).*
+*Résultat attendu : 44 tests réussis (16 tests PVGIS & API + 21 tests physiques Bird & Hulstrom + 7 tests UI et navigation).*
 
 ### Étape 4 : Compilation de production (PWA)
 ```bash
@@ -201,7 +231,7 @@ Ouvrez votre navigateur sur : **`http://localhost:3000`**.
 
 ---
 
-## 8. Installation sur Smartphone (PWA 100% Autonome)
+## 9. Installation sur Smartphone (PWA 100% Autonome)
 
 1. Ouvrez `http://localhost:3000` (ou l'adresse IP locale de votre machine sur le réseau Wi-Fi) sur votre téléphone.
 2. **Sur Android (Chrome)** : Appuyez sur le bandeau **"Installer l'Application"** ou via le menu ⋮ > "Ajouter à l'écran d'accueil".

@@ -259,7 +259,15 @@ export async function fetchHourlyRadiation(
       latitude: normLat,
       longitude: normLon,
       date: targetDate,
-      source: 'simulated_clearsky_model',
+      source: 'simulated_clearsky_spencer_bird',
+      data_type: 'simulated_clearsky',
+      requested_date: targetDate,
+      actual_data_period: {
+        start: `${targetDate}T00:00:00Z`,
+        end: `${targetDate}T23:00:00Z`,
+      },
+      fallback_applied: true,
+      fallback_reason: 'client_offline_or_network_error',
       units: 'W/m² for irradiance, kWh/m² for irradiation',
       daily_irradiation_kwh: physicalDay.daily_ghi_kwh_m2,
       peak_ghi: physicalDay.peak_ghi_w_m2,
@@ -284,8 +292,14 @@ export async function fetchHourlyRadiation(
         dhi: h.dhi_w_m2,
         solar_elevation: h.solar_elevation_deg,
         solar_azimuth: h.solar_azimuth_deg,
-        temperature: h.temperature_c,
-        quality_flag: h.quality_flag,
+        temperature: undefined,
+        ambient_temperature_proxy_c: h.ambient_temperature_proxy_c,
+        temperature_is_forecast: false,
+        temperature_note:
+          'Proxy physique indicatif (estimation théorique simplifiée, non issu d’une prévision ou station météo).',
+        time_semantics: 'hourly_integrated_mean',
+        interval_duration_hours: 1.0,
+        quality_flag: 'model_clearsky',
       })),
     };
 

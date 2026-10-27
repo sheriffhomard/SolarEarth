@@ -3,7 +3,8 @@ PVGIS (Photovoltaic Geographical Information System - European Commission JRC) P
 V0.2 Implementation: Live HTTP client, Rate limiting, Caching, and Solar Radiation parsing.
 """
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+import math
 from typing import Any, Dict, List, Optional
 import httpx
 from backend.app.core.config import settings
@@ -11,6 +12,9 @@ from backend.app.core.cache import pvgis_rate_limiter, solar_data_cache
 from backend.app.core.solar_calc import generate_24h_clearsky_series
 from backend.app.providers.base import SolarDataProvider
 from backend.app.schemas.provider import SupportedOperations, ProviderState, ProviderStatus
+
+PVGIS_MIN_YEAR = 2005
+PVGIS_MAX_YEAR = 2023
 
 
 class PVGISProvider(SolarDataProvider):
@@ -110,76 +114,73 @@ class PVGISProvider(SolarDataProvider):
             target_date = date.today()
             date_str = target_date.strftime("%Y-%m-%d")
 
-        # PVGIS satellite datasets typically cover years up to 2020/2023.
-        # Clamped reference year for satellite database query
-        query_year = min(target_date.year, 2020)
-
         raw_points: Optional[List[Dict[str, Any]]] = None
         data_source = "pvgis"
+        fallback_applied = False
+        fallback_reason: Optional[str] = None
+        actual_period: Optional[str] = None
 
-        # Rate-limited upstream HTTP request to JRC PVGIS
-        await pvgis_rate_limiter.acquire()
-        try:
-            async with self._create_http_client() as client:
-                self.logger.info(
-                    f"Requesting PVGIS seriescalc for ({norm_lat}, {norm_lon}), year {query_year}"
-                )
-                response = await client.get(
-                    "seriescalc",
-                    params={
-                        "lat": norm_lat,
-                        "lon": norm_lon,
-                        "startyear": query_year,
-                        "endyear": query_year,
-                        "outputformat": "json",
-                        "pvcalculation": 0,
-                        "components": 1,
-                        "trackingtype": 0,
-                        "angle": 0,
-                    },
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    hourly_entries = data.get("outputs", {}).get("hourly", [])
-                    raw_points = self._extract_matching_day(hourly_entries, target_date, date_str)
-                    if raw_points:
-                        data_source = "pvgis_jrc_seriescalc"
-
-                # If seriescalc didn't return complete data, try /hourlyradiation endpoint
-                if not raw_points:
+        # Check if requested year is within PVGIS SARAH-2 / ERA5 historical archive
+        if target_date.year < PVGIS_MIN_YEAR or target_date.year > PVGIS_MAX_YEAR:
+            self.logger.info(
+                f"Year {target_date.year} outside PVGIS satellite archive ({PVGIS_MIN_YEAR}-{PVGIS_MAX_YEAR}). Using clear-sky model."
+            )
+            fallback_applied = True
+            fallback_reason = (
+                f"Date {date_str} (année {target_date.year}) hors couverture d'archive satellitaire PVGIS ({PVGIS_MIN_YEAR}-{PVGIS_MAX_YEAR}). "
+                f"Aucune substitution silencieuse appliquée ; modèle physique ciel clair Spencer & Bird activé."
+            )
+        else:
+            # Query the exact requested year - never clamp silently
+            query_year = target_date.year
+            await pvgis_rate_limiter.acquire()
+            try:
+                async with self._create_http_client() as client:
                     self.logger.info(
-                        f"Trying PVGIS hourlyradiation endpoint for ({norm_lat}, {norm_lon}), year {query_year}"
+                        f"Requesting PVGIS seriescalc for ({norm_lat}, {norm_lon}), year {query_year}"
                     )
-                    hr_response = await client.get(
-                        "hourlyradiation",
+                    response = await client.get(
+                        "seriescalc",
                         params={
                             "lat": norm_lat,
                             "lon": norm_lon,
                             "startyear": query_year,
                             "endyear": query_year,
                             "outputformat": "json",
+                            "pvcalculation": 0,
                             "components": 1,
+                            "trackingtype": 0,
+                            "angle": 0,
                         },
                     )
-                    if hr_response.status_code == 200:
-                        hr_data = hr_response.json()
-                        hourly_entries = hr_data.get("outputs", {}).get("hourly", [])
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        hourly_entries = data.get("outputs", {}).get("hourly", [])
                         raw_points = self._extract_matching_day(hourly_entries, target_date, date_str)
                         if raw_points:
-                            data_source = "pvgis_jrc_hourlyradiation"
+                            data_source = "pvgis_jrc_seriescalc"
+                            actual_period = date_str
                     else:
                         self.logger.warning(
-                            f"PVGIS hourlyradiation returned HTTP {hr_response.status_code}: {hr_response.text[:120]}"
+                            f"PVGIS seriescalc returned HTTP {response.status_code} for {date_str}"
                         )
-        except Exception as exc:
-            self.logger.warning(f"PVGIS external request failed or timed out: {exc}. Using clear-sky model.")
+                        fallback_applied = True
+                        fallback_reason = f"PVGIS a retourné le code HTTP {response.status_code}."
+            except Exception as exc:
+                self.logger.warning(f"PVGIS external request failed or timed out: {exc}. Using clear-sky model.")
+                fallback_applied = True
+                fallback_reason = f"Erreur réseau ou délai d'attente dépassé vers PVGIS ({exc})."
 
-        # Fallback to high-precision clear-sky astronomical model if PVGIS was unavailable or offline
+        # Fallback to high-precision clear-sky astronomical model if PVGIS was unavailable, out-of-bounds, or empty
         if not raw_points or len(raw_points) < 24:
+            if not fallback_applied:
+                fallback_applied = True
+                fallback_reason = "Données PVGIS incomplètes pour cette date."
             self.logger.info(f"Using high-precision Clear-Sky model for ({norm_lat}, {norm_lon}) on {date_str}")
             raw_points = generate_24h_clearsky_series(norm_lat, norm_lon, date_str)
             data_source = "model_clearsky"
+            actual_period = None
 
         # Calculate key summary aggregates
         total_wh = sum(p.get("ghi", 0.0) for p in raw_points)
@@ -190,14 +191,25 @@ class PVGISProvider(SolarDataProvider):
 
         now_iso = datetime.now(timezone.utc).isoformat()
         provenance = {
-            "source_id": "pvgis_jrc_sarah2" if data_source == "pvgis_seriescalc" else "pvgis_validated_clearsky",
-            "source_name": "Commission Européenne JRC — PVGIS v5.3 (SARAH-2 / ERA5)",
-            "source_version": "v5.3",
+            "source_id": "pvgis_jrc_sarah2" if data_source == "pvgis_jrc_seriescalc" else "spencer_bird_clearsky",
+            "source_name": "Commission Européenne JRC — PVGIS v5.3 (SARAH-2 / ERA5)" if data_source == "pvgis_jrc_seriescalc" else "Modèle Physique Ciel Clair Spencer & Bird (1981)",
+            "source_version": "v5.3" if data_source == "pvgis_jrc_seriescalc" else "1.0",
+            "data_type": "historical_satellite" if data_source == "pvgis_jrc_seriescalc" else "simulated_clearsky",
+            "requested_date": date_str,
+            "actual_data_period": actual_period,
+            "fallback_applied": fallback_applied,
+            "fallback_reason": fallback_reason,
+            "temperature_source": "era5_reanalysis" if data_source == "pvgis_jrc_seriescalc" else "theoretical_proxy",
             "data_retrieval_date_utc": now_iso,
             "calculation_date_utc": now_iso,
-            "spatial_resolution": "0.05° (~5 km)",
+            "spatial_resolution": "0.05° (~5 km)" if data_source == "pvgis_jrc_seriescalc" else "Coordonnées exactes",
             "temporal_resolution": "1 heure (moyenne intégrée)",
             "solar_constant_w_m2": 1361.2,
+            "limits_and_disclaimers": [
+                "Archive satellitaire PVGIS SARAH-2 / ERA5 disponible uniquement de 2005 à 2023.",
+                "En dehors de cette plage ou en cas de panne réseau, bascule explicite vers simulation astronomique sans substitution silencieuse de date.",
+                "Température T2m issue de réanalyse ERA5 (pour PVGIS) ou proxy thermique théorique (pour modèle simulé).",
+            ],
             "formulas": {
                 "daily_irradiation": {
                     "name": "Irradiation Globale Journalière",
@@ -228,7 +240,7 @@ class PVGISProvider(SolarDataProvider):
                 },
             },
             "quality_assessment": {
-                "status": "satellite_derived" if data_source == "pvgis_seriescalc" else "model_clearsky",
+                "status": "satellite_derived" if data_source == "pvgis_jrc_seriescalc" else "model_clearsky",
                 "missing_values_count": 0,
                 "outliers_detected": 0,
                 "closure_equation_verified": True,
@@ -257,19 +269,36 @@ class PVGISProvider(SolarDataProvider):
     def _extract_matching_day(
         self, hourly_entries: List[Dict], target_date: date, date_str: str
     ) -> List[Dict[str, Any]]:
-        """Extracts 24 hours corresponding to month and day from PVGIS seriescalc payload."""
+        """Extracts 24 hours corresponding to target date from PVGIS seriescalc payload."""
         day_points = []
-        target_month_day = f"{target_date.month:02d}{target_date.day:02d}"
+        target_ymd = target_date.strftime("%Y%m%d")
 
         for entry in hourly_entries:
-            time_raw = entry.get("time", "")  # e.g. "20200615:0010"
-            if len(time_raw) >= 8 and time_raw[4:8] == target_month_day:
+            time_raw = str(entry.get("time", ""))  # e.g. "20200615:0010" or "20200615:0000"
+            if len(time_raw) >= 8 and time_raw[:8] == target_ymd:
                 hour = int(time_raw[9:11]) if len(time_raw) >= 11 else len(day_points)
-                ghi = float(entry.get("G(h)", 0.0))
-                dni = float(entry.get("Gb(n)", 0.0))
-                dhi = float(entry.get("Gd(h)", 0.0))
+                # In PVGIS seriescalc on horizontal plane (angle=0):
+                # Gb(i) is direct beam on horizontal (W/m²)
+                # Gd(i) is diffuse horizontal (W/m²)
+                # Gr(i) is ground reflected (0 on horizontal)
+                # H_sun is solar elevation (°)
+                # T2m is 2m ambient temperature (°C)
+                gb_i = float(entry.get("Gb(i)", entry.get("Gb(n)", 0.0)))
+                gd_i = float(entry.get("Gd(i)", entry.get("Gd(h)", 0.0)))
                 elevation = float(entry.get("H_sun", 0.0))
                 temp = float(entry.get("T2m", 15.0))
+
+                # GHI = Gb(i) + Gd(i)
+                ghi = float(entry.get("G(h)", gb_i + gd_i))
+
+                # DNI = Gb(i) / sin(H_sun) when elevation > 1 deg
+                sin_elev = math.sin(math.radians(elevation))
+                if sin_elev > 0.0175 and gb_i > 0:
+                    dni = gb_i / sin_elev
+                else:
+                    dni = 0.0
+
+                dhi = gd_i
 
                 day_points.append({
                     "hour": hour,
