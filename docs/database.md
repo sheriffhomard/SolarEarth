@@ -5,7 +5,7 @@
 Afin de permettre une exécution fluide sur un **téléphone portable / smartphone (PWA)** en mode autonome, **sans nécessiter de serveur de base de données externe dans le cloud ni de conteneur Docker complexe**, Solar Earth utilise une architecture de stockage entièrement locale :
 
 - **Moteur Principal Smartphone** : **IndexedDB** (`SolarEarth_MobileDB`), l'API de base de données transactionnelle native des smartphones (Android, iOS Safari, Chrome, Firefox).
-- **Moteur Fichier Local** : **SQLite 3** (`sqlite:///./solar_earth.db`) si exécuté en environnement local sans serveur.
+- **Moteur Fichier Local Développeur** : **SQLite 3** (`sqlite:///./solar_earth.db`) si exécuté en environnement local sans serveur. Le fichier binaire `solar_earth.db` est exclu de Git (`.gitignore`) et peut être initialisé via `python scripts/init_sqlite.py`.
 - **Zéro Cloud** : Aucune dépendance réseau pour lire ou écrire des stations, des observations ou des réglages.
 - **Zéro Docker** : Aucun conteneur à compiler ou démarrer.
 

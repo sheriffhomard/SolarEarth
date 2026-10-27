@@ -134,7 +134,7 @@ export interface HourlyRadiationResponse {
   longitude: number;
   date: string;
   source: string;
-  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year';
+  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year' | 'reanalysis';
   requested_date?: string;
   actual_data_period?: { start: string; end: string } | null;
   units: string;

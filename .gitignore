@@ -7,6 +7,12 @@ coverage/
 .env*
 !.env.example
 
+# Local SQLite databases (generated during development/tests)
+solar_earth.db
+*.db
+*.sqlite
+*.sqlite3
+
 # Python
 __pycache__/
 *.py[cod]

@@ -25,7 +25,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-bold tracking-tight text-slate-100 text-base">SOLAR EARTH</span>
               <span className="font-mono text-[10px] text-amber-400 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-800/40">
-                V0.1
+                V0.2
               </span>
             </div>
             <p className="text-[11px] text-slate-400 hidden sm:block">
@@ -42,9 +42,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 serviceStatus === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{serviceStatus === 'ok' ? 'Mode Téléphone Autonome' : 'Initialisation'}</span>
-            <span className="text-slate-600" aria-hidden="true">·</span>
-            <span className="text-slate-400">IndexedDB & SQLite Local</span>
+            <span className="text-slate-400">PWA : IndexedDB Local</span>
+            <span className="text-slate-600 hidden lg:inline" aria-hidden="true">·</span>
+            <span className="text-slate-400 hidden lg:inline">Station Dev : SQLite</span>
           </div>
 
           <PWAInstallPrompt />

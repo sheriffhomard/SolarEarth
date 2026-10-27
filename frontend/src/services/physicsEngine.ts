@@ -197,8 +197,198 @@ export function calculateSunshineDurationHours(hourlyDni: number[]): number {
   return hourlyDni.reduce((count, dni) => (dni >= WMO_SUNSHINE_THRESHOLD_DNI ? count + 1.0 : count), 0);
 }
 
+export interface BirdHulstromAtmosphericInputs {
+  pressureRatio?: number; // P / P0, default 1.0 (sea level standard)
+  ozoneCmAtm?: number; // lo in cm-atm, default 0.34 (340 Dobson Units)
+  precipitableWaterCm?: number; // w in cm, default 1.5 cm
+  aerosolOpticalDepth500?: number; // tau_a at 500nm, default 0.10 (clear continental atmosphere)
+  groundAlbedo?: number; // rho_g, default 0.20
+  forwardScatterFraction?: number; // F, default 0.84
+}
+
+export interface BirdHulstromTransmittances {
+  dni: number;
+  dhi: number;
+  ghi: number;
+  rayleighTransmittance: number;
+  ozoneTransmittance: number;
+  gasesTransmittance: number;
+  waterVaporTransmittance: number;
+  aerosolTransmittance: number;
+  airMass: number;
+}
+
 /**
- * Generates a normalized 24h astronomical Clear-Sky observation series for any coordinate on Earth.
+ * Authentic Bird & Hulstrom (1981) SERI Clear Sky Model for Direct and Diffuse Insolation.
+ * Reference: Bird, R.E. and Hulstrom, R.L. (1981), SERI/TR-642-761.
+ */
+export function calculateBirdHulstromClearSky(
+  i0Normal: number,
+  zenithDeg: number,
+  inputs: BirdHulstromAtmosphericInputs = {}
+): BirdHulstromTransmittances {
+  if (zenithDeg >= 90 || zenithDeg < 0) {
+    return {
+      dni: 0,
+      dhi: 0,
+      ghi: 0,
+      rayleighTransmittance: 0,
+      ozoneTransmittance: 0,
+      gasesTransmittance: 0,
+      waterVaporTransmittance: 0,
+      aerosolTransmittance: 0,
+      airMass: 0,
+    };
+  }
+
+  const cosZenith = Math.cos((zenithDeg * Math.PI) / 180);
+  const pRatio = inputs.pressureRatio ?? 1.0;
+  const lo = inputs.ozoneCmAtm ?? 0.34;
+  const w = inputs.precipitableWaterCm ?? 1.5;
+  const tauA = inputs.aerosolOpticalDepth500 ?? 0.10;
+  const rhoG = inputs.groundAlbedo ?? 0.20;
+  const F = inputs.forwardScatterFraction ?? 0.84;
+
+  // 1. Air Mass (Kasten & Young 1989 formulation)
+  const am = 1.0 / (cosZenith + 0.50572 * Math.pow(Math.max(0.01, 96.07995 - zenithDeg), -1.6364));
+  const amPressure = am * pRatio;
+
+  // 2. Ozone Transmittance (To)
+  const u3 = lo * am;
+  const to =
+    1.0 -
+    0.1611 * u3 * Math.pow(1.0 + 139.48 * u3, -0.3035) -
+    (0.002715 * u3) / (1.0 + 0.044 * u3 + 0.0003 * u3 * u3);
+
+  // 3. Uniformly Mixed Gases Transmittance (Tg)
+  const tg = Math.exp(-0.0127 * Math.pow(amPressure, 0.26));
+
+  // 4. Water Vapor Transmittance (Tw)
+  const u1 = w * amPressure;
+  const tw = 1.0 - (2.4959 * u1) / (Math.pow(1.0 + 79.034 * u1, 0.6828) + 6.385 * u1);
+
+  // 5. Rayleigh Scattering Transmittance (Tr)
+  const tr = Math.exp(
+    -0.0903 * Math.pow(amPressure, 0.84) * (1.0 + amPressure - Math.pow(amPressure, 1.01))
+  );
+
+  // 6. Aerosol Extinction Transmittance (Ta)
+  const ta = Math.exp(
+    -Math.pow(tauA, 0.873) * (1.0 + tauA - Math.pow(tauA, 0.7088)) * Math.pow(am, 0.9108)
+  );
+
+  // 7. Direct Normal Irradiance (DNI)
+  // 0.9662 factor covers the 0.3 to 3.0 um spectrum in Bird & Hulstrom (1981)
+  const dni = Math.max(0, 0.9662 * i0Normal * tr * to * tg * tw * ta);
+
+  // 8. Diffuse Components (Rayleigh, Aerosol forward scattering, and Ground-Atmosphere multiple reflections)
+  const denom = Math.max(0.1, 1.0 - am + Math.pow(am, 1.02));
+  const idr = (0.79 * i0Normal * cosZenith * to * tg * tw * 0.5 * (1.0 - tr)) / denom;
+  const ida = (0.79 * i0Normal * cosZenith * to * tg * tw * tr * F * (1.0 - ta)) / denom;
+
+  const rhoA = 0.0685 + (1.0 - F) * (1.0 - ta);
+  const idm = ((dni * cosZenith + idr + ida) * rhoG * rhoA) / (1.0 - rhoG * rhoA);
+
+  const dhi = Math.max(0, idr + ida + idm);
+  const ghi = Math.max(0, dni * cosZenith + dhi);
+
+  return {
+    dni: Math.round(dni * 10) / 10,
+    dhi: Math.round(dhi * 10) / 10,
+    ghi: Math.round(ghi * 10) / 10,
+    rayleighTransmittance: Math.round(tr * 1000) / 1000,
+    ozoneTransmittance: Math.round(to * 1000) / 1000,
+    gasesTransmittance: Math.round(tg * 1000) / 1000,
+    waterVaporTransmittance: Math.round(tw * 1000) / 1000,
+    aerosolTransmittance: Math.round(ta * 1000) / 1000,
+    airMass: Math.round(am * 100) / 100,
+  };
+}
+
+/**
+ * Computes numerically integrated hourly solar radiation for hour interval [h, h+1] UTC
+ * using 4-subinterval composite trapezoidal rule (evaluating at t = 0m, 15m, 30m, 45m, 60m).
+ * This ensures that sunrise/sunset hours with partial sunlight are accurately integrated
+ * rather than sampled at a single instantaneous point.
+ */
+export function integrateHourlyBirdHulstrom(
+  latitudeDeg: number,
+  longitudeDeg: number,
+  dayOfYear: number,
+  hourUtc: number, // 0 to 23
+  i0Normal: number,
+  atmosphericInputs: BirdHulstromAtmosphericInputs = {}
+): {
+  ghiIntegrated: number;
+  dniIntegrated: number;
+  dhiIntegrated: number;
+  midpointElevationDeg: number;
+  midpointAzimuthDeg: number;
+  midpointZenithDeg: number;
+  trueSolarTimeMinutes: number;
+} {
+  const subIntervals = [0.0, 0.25, 0.5, 0.75, 1.0];
+  const weights = [0.5, 1.0, 1.0, 1.0, 0.5]; // Trapezoidal weights for delta_t = 0.25 h
+
+  let ghiSum = 0;
+  let dniSum = 0;
+  let dhiSum = 0;
+
+  let midpointElevation = 0;
+  let midpointAzimuth = 0;
+  let midpointZenith = 0;
+  let midpointTst = 0;
+
+  for (let i = 0; i < subIntervals.length; i++) {
+    const fraction = subIntervals[i];
+    const t = hourUtc + fraction;
+    const angles = calculateSolarAngles(latitudeDeg, longitudeDeg, dayOfYear, t);
+
+    if (fraction === 0.5) {
+      midpointElevation = angles.elevationDeg;
+      midpointAzimuth = angles.azimuthDeg;
+      midpointZenith = angles.zenithDeg;
+
+      const { equationOfTimeMin } = getSolarAstronomicalParameters(dayOfYear, t);
+      const timeOffsetMin = equationOfTimeMin + 4 * longitudeDeg;
+      midpointTst = (t * 60 + timeOffsetMin + 1440 * 2) % 1440;
+    }
+
+    let subGhi = 0;
+    let subDni = 0;
+    let subDhi = 0;
+
+    if (angles.elevationDeg > 0) {
+      const bird = calculateBirdHulstromClearSky(i0Normal, angles.zenithDeg, atmosphericInputs);
+      subGhi = bird.ghi;
+      subDni = bird.dni;
+      subDhi = bird.dhi;
+    }
+
+    const w = weights[i];
+    ghiSum += subGhi * w;
+    dniSum += subDni * w;
+    dhiSum += subDhi * w;
+  }
+
+  const ghiIntegrated = Math.round((ghiSum / 4.0) * 10) / 10;
+  const dniIntegrated = Math.round((dniSum / 4.0) * 10) / 10;
+  const dhiIntegrated = Math.round((dhiSum / 4.0) * 10) / 10;
+
+  return {
+    ghiIntegrated,
+    dniIntegrated,
+    dhiIntegrated,
+    midpointElevationDeg: midpointElevation,
+    midpointAzimuthDeg: midpointAzimuth,
+    midpointZenithDeg: midpointZenith,
+    trueSolarTimeMinutes: Math.round(midpointTst * 10) / 10,
+  };
+}
+
+/**
+ * Generates a normalized 24h astronomical Clear-Sky observation series for any coordinate on Earth
+ * with true hourly numerical integration over [h, h+1] UTC.
  */
 export function generateScientificSolarDay(
   latitude: number,
@@ -206,7 +396,15 @@ export function generateScientificSolarDay(
   dateStr: string,
   locationName?: string,
   sourceCode: 'pvgis_jrc' | 'model_clearsky_spencer_bird' = 'model_clearsky_spencer_bird',
-  cacheStatus: CacheFreshnessStatus = 'fallback_model'
+  cacheStatus: CacheFreshnessStatus = 'fallback_model',
+  atmosphericInputs: BirdHulstromAtmosphericInputs = {
+    pressureRatio: 1.0,
+    ozoneCmAtm: 0.34,
+    precipitableWaterCm: 1.5,
+    aerosolOpticalDepth500: 0.10,
+    groundAlbedo: 0.20,
+    forwardScatterFraction: 0.84,
+  }
 ): UnifiedSolarObservationRecord {
   const parts = dateStr.split('-').map(Number);
   const year = parts[0] || new Date().getFullYear();
@@ -224,39 +422,39 @@ export function generateScientificSolarDay(
   let extraterrestrialHorizontalWh = 0;
 
   for (let hour = 0; hour < 24; hour++) {
-    const { elevationDeg, azimuthDeg } = calculateSolarAngles(latitude, longitude, dayOfYear, hour);
+    // True numerical integration over [hour, hour + 1] UTC
+    const integrated = integrateHourlyBirdHulstrom(
+      latitude,
+      longitude,
+      dayOfYear,
+      hour,
+      i0,
+      atmosphericInputs
+    );
 
-    let ghi = 0;
-    let dni = 0;
-    let dhi = 0;
+    const ghi = integrated.ghiIntegrated;
+    const dni = integrated.dniIntegrated;
+    const dhi = integrated.dhiIntegrated;
+    const elevationDeg = integrated.midpointElevationDeg;
+    const azimuthDeg = integrated.midpointAzimuthDeg;
+
     let kt: number | undefined = undefined;
-
     if (elevationDeg > 0) {
       const sinEl = Math.sin((elevationDeg * Math.PI) / 180);
-      const zenithDeg = 90 - elevationDeg;
-
-      // Kasten-Young air mass formula
-      const airMass = Math.max(
-        1.0,
-        Math.min(30.0, 1.0 / (sinEl + 0.50572 * Math.pow(96.07995 - zenithDeg, -1.6364)))
-      );
-
-      // Atmospheric optical transmittance (Clear sky parameters)
-      const tauBeam = Math.exp(-0.165 * airMass);
-      const tauDiff = 0.082 + 0.038 * sinEl;
-
-      dni = Math.max(0, Math.min(1080, Math.round(i0 * tauBeam * 10) / 10));
-      dhi = Math.max(0, Math.min(320, Math.round(i0 * sinEl * tauDiff * 10) / 10));
-      ghi = Math.max(0, Math.round((dni * sinEl + dhi) * 10) / 10);
-
       const i0Horizontal = i0 * sinEl;
       extraterrestrialHorizontalWh += i0Horizontal;
       kt = i0Horizontal > 10 ? Math.round((ghi / i0Horizontal) * 100) / 100 : 0;
     }
 
-    const temp = Math.round((14 + 7 * Math.sin(Math.max(0, (elevationDeg * Math.PI) / 180)) + 3 * Math.cos((latitude * Math.PI) / 180)) * 10) / 10;
+    // Explicit illustrative temperature proxy - NOT a weather data point
+    const tempProxy = Math.round(
+      (14 +
+        7 * Math.sin(Math.max(0, (elevationDeg * Math.PI) / 180)) +
+        3 * Math.cos((latitude * Math.PI) / 180)) *
+        10
+    ) / 10;
 
-    // Physical sanity check
+    // Physical sanity check on integrated values
     const validation = validatePhysicalIrradiance(ghi, dni, dhi, elevationDeg);
     if (!validation.isValid) {
       warnings.push(`Heure ${hour}h: ${validation.violations.join('; ')}`);
@@ -270,7 +468,9 @@ export function generateScientificSolarDay(
       dhi_w_m2: dhi,
       solar_elevation_deg: elevationDeg,
       solar_azimuth_deg: azimuthDeg,
-      temperature_c: temp,
+      // For model simulation, temperature_c is intentionally undefined to avoid false weather claims
+      temperature_c: sourceCode === 'pvgis_jrc' ? tempProxy : undefined,
+      ambient_temperature_proxy_c: tempProxy,
       clearness_index_kt: kt,
       quality_flag: sourceCode === 'pvgis_jrc' ? 'satellite_validated' : 'model_clearsky',
     });

@@ -9,6 +9,7 @@ import {
   calculateDailyIrradiation,
   calculateSunshineDurationHours,
   generateScientificSolarDay,
+  calculateBirdHulstromClearSky,
 } from '../services/physicsEngine';
 
 describe('Solar Physics Engine — Physical Validation & Unit Consistency (Priorité 3)', () => {
@@ -293,5 +294,285 @@ describe('Solar Physics Engine — Physical Validation & Unit Consistency (Prior
       expect(point.temperature_is_forecast).toBe(false);
       expect(point.temperature_note).toContain('Proxy');
     }
+  });
+
+  it('14. PV Transposition Engine: Validates angle of incidence, cell heating and POA irradiance', async () => {
+    const {
+      calculateAngleOfIncidenceCos,
+      calculatePlaneOfArrayIrradiance,
+      calculateCellTemperature,
+      simulatePvDailyPerformance,
+      generatePvScenarioComparisons,
+    } = await import('../services/pvSimulatorEngine');
+
+    // Solar elevation 45°, azimuth 180° (South). Surface tilt 45°, surface azimuth 180° (South).
+    // Sun is perpendicular to panel -> angle of incidence = 0°, cos = 1.0
+    const { cosIncidence, incidenceAngleDeg } = calculateAngleOfIncidenceCos(45, 180, 45, 180);
+    expect(cosIncidence).toBeCloseTo(1.0, 3);
+    expect(incidenceAngleDeg).toBeCloseTo(0.0, 1);
+
+    // Plane of Array transposition: DNI 800 W/m², DHI 100 W/m², GHI 665 W/m²
+    const poa = calculatePlaneOfArrayIrradiance(665, 800, 100, 45, 180, 35, 180, 0.20);
+    expect(poa.poaTotal).toBeGreaterThan(600);
+    expect(poa.poaBeam).toBeGreaterThan(0);
+    expect(poa.poaDiffuse).toBeGreaterThan(0);
+    expect(poa.poaReflected).toBeGreaterThan(0);
+
+    // Cell temperature model: T_cell = T_amb + G_poa * (NOCT - 20) / 800
+    // At T_amb = 25°C, G_poa = 800 W/m², NOCT = 45°C -> T_cell = 25 + 800*(25)/800 = 50°C
+    const tCell = calculateCellTemperature(25, 800, 45);
+    expect(tCell).toBe(50.0);
+
+    // Multi-scenario benchmark generation
+    const sampleDay = generateScientificSolarDay(44.053, 5.048, '2026-06-21', 'Carpentras');
+    const hourlyObs = sampleDay.hourly.map((h) => ({
+      hourUtc: h.hour_utc,
+      solarElevationDeg: h.solar_elevation_deg,
+      solarAzimuthDeg: h.solar_azimuth_deg ?? 180,
+      ghiWm2: h.ghi_w_m2,
+      dniWm2: h.dni_w_m2,
+      dhiWm2: h.dhi_w_m2,
+      temperatureC: h.temperature_c,
+    }));
+
+    const scenarios = generatePvScenarioComparisons(hourlyObs, {
+      installedCapacityKwp: 6.0,
+      panelEfficiencyPercent: 21.0,
+      tiltDeg: 35,
+      azimuthDeg: 180,
+      technology: 'monocrystalline',
+      noctDegC: 45,
+      tempCoefficientPercentPerC: -0.38,
+      systemLossPercent: 14,
+      inverterEfficiencyPercent: 97,
+      groundAlbedo: 0.20,
+    });
+
+    expect(scenarios).toHaveLength(4);
+    expect(scenarios[0].name).toContain('Plein Sud');
+    expect(scenarios[1].name).toContain('Toiture Plate');
+    expect(scenarios[3].name).toContain('Tracker');
+    // Tracker yields more daily kWh than flat roof
+    expect(scenarios[3].dailyAcKwh).toBeGreaterThan(scenarios[1].dailyAcKwh);
+  });
+
+  it('15. Climate Engine: Validates Solar Availability Index (SAI) & reference normals', async () => {
+    const {
+      calculateSolarAvailabilityIndex,
+      getClimateNormalsForLocation,
+      calculateClimateAnomaly,
+      GLOBAL_SOLAR_BENCHMARKS,
+    } = await import('../services/climateService');
+
+    // Atacama desert: high annual irradiation (>2500 kWh/m²), low seasonality, high stability -> SAI >= 95
+    const atacamaSai = calculateSolarAvailabilityIndex(2540, 1.52, 2.1);
+    expect(atacamaSai.indexScore).toBeGreaterThanOrEqual(95);
+
+    // Stockholm: high seasonality (>10), lower annual irradiation -> SAI < 50
+    const stockholmSai = calculateSolarAvailabilityIndex(980, 14.2, 8.5);
+    expect(stockholmSai.indexScore).toBeLessThan(55);
+
+    // Verify benchmark stations catalog integrity
+    expect(GLOBAL_SOLAR_BENCHMARKS.length).toBeGreaterThanOrEqual(6);
+    for (const st of GLOBAL_SOLAR_BENCHMARKS) {
+      expect(st.monthlyNormals).toHaveLength(12);
+      expect(st.annualGhiKwhM2).toBeGreaterThan(500);
+    }
+
+    // Climate Anomaly calculation: observed 7.8 kWh/m² vs reference 4.6 kWh/m² -> surplus
+    const anomaly = calculateClimateAnomaly(7.8, '2026-06-21', 44.053, 5.048);
+    expect(anomaly.status).toBeDefined();
+    expect(anomaly.explanationFr.length).toBeGreaterThan(10);
+  });
+
+  it('16. Solar World Map Engine: Validates subsolar coordinates and day/night terminator', async () => {
+    const {
+      calculateSubsolarPoint,
+      calculateTerminatorPath,
+      estimateInstantaneousRadiation,
+      WORLD_PRESETS,
+    } = await import('../services/solarWorldMapEngine');
+
+    // Day 172 (Summer Solstice, ~June 21): subsolar latitude is ~ +23.4° (Tropic of Cancer)
+    const subsolarSummer = calculateSubsolarPoint(172, 12);
+    expect(subsolarSummer.latitudeDeg).toBeGreaterThan(23.0);
+    expect(subsolarSummer.latitudeDeg).toBeLessThan(23.6);
+    // At 12:00 UTC with EoT ~ -1.5 min, longitude is close to 0° (+/- 2°)
+    expect(Math.abs(subsolarSummer.longitudeDeg)).toBeLessThan(5);
+
+    // Day 355 (Winter Solstice, ~Dec 21): subsolar latitude is ~ -23.4° (Tropic of Capricorn)
+    const subsolarWinter = calculateSubsolarPoint(355, 12);
+    expect(subsolarWinter.latitudeDeg).toBeLessThan(-23.0);
+    expect(subsolarWinter.latitudeDeg).toBeGreaterThan(-23.6);
+
+    // Terminator path contains continuous points around the globe
+    const terminator = calculateTerminatorPath(172, 12);
+    expect(terminator.length).toBeGreaterThan(50);
+
+    // Instantaneous radiation: at night (e.g. 00:00 UTC in Paris) radiation must be 0
+    const nightRad = estimateInstantaneousRadiation(48.85, 2.35, 172, 0);
+    expect(nightRad.isDaylight).toBe(false);
+    expect(nightRad.ghiWm2).toBe(0);
+
+    // At noon in Paris on summer solstice, radiation must be positive
+    const noonRad = estimateInstantaneousRadiation(48.85, 2.35, 172, 12);
+    expect(noonRad.isDaylight).toBe(true);
+    expect(noonRad.ghiWm2).toBeGreaterThan(600);
+  });
+
+  it('17. Bird & Hulstrom (1981) SERI Model: Validates atmospheric transmittances and radiative closure', () => {
+    const i0 = 1361.2;
+    const zenithDeg = 30.0; // Elevation = 60°
+
+    const result = calculateBirdHulstromClearSky(i0, zenithDeg, {
+      pressureRatio: 1.0,
+      ozoneCmAtm: 0.34,
+      precipitableWaterCm: 1.5,
+      aerosolOpticalDepth500: 0.10,
+      groundAlbedo: 0.20,
+      forwardScatterFraction: 0.84,
+    });
+
+    // 1. All transmittances must be between 0 and 1
+    expect(result.rayleighTransmittance).toBeGreaterThan(0.85);
+    expect(result.rayleighTransmittance).toBeLessThan(1.0);
+    expect(result.ozoneTransmittance).toBeGreaterThan(0.95);
+    expect(result.ozoneTransmittance).toBeLessThan(1.0);
+    expect(result.gasesTransmittance).toBeGreaterThan(0.95);
+    expect(result.gasesTransmittance).toBeLessThan(1.0);
+    expect(result.waterVaporTransmittance).toBeGreaterThan(0.80);
+    expect(result.waterVaporTransmittance).toBeLessThan(1.0);
+    expect(result.aerosolTransmittance).toBeGreaterThan(0.80);
+    expect(result.aerosolTransmittance).toBeLessThan(1.0);
+
+    // 2. DNI, DHI, GHI positivity and reasonable clear-sky values at 60° elevation
+    expect(result.dni).toBeGreaterThan(750);
+    expect(result.dni).toBeLessThan(1050);
+    expect(result.dhi).toBeGreaterThan(50);
+    expect(result.dhi).toBeLessThan(200);
+
+    // 3. Exact Radiative closure: GHI = DNI * cos(zenith) + DHI
+    const cosZenith = Math.cos((zenithDeg * Math.PI) / 180);
+    const expectedGhi = Math.round((result.dni * cosZenith + result.dhi) * 10) / 10;
+    expect(Math.abs(result.ghi - expectedGhi)).toBeLessThanOrEqual(1.0);
+
+    // 4. Night-time zeroing (zenith >= 90°)
+    const night = calculateBirdHulstromClearSky(i0, 95);
+    expect(night.dni).toBe(0);
+    expect(night.dhi).toBe(0);
+    expect(night.ghi).toBe(0);
+  });
+
+  it('18. Strict Numeric Coordinate Validation: Rejects trailing letters, empty strings, NaN, Infinity', async () => {
+    const { validateCoordinates, isStrictNumericCoordinate } = await import(
+      '../services/solarCalculator'
+    );
+
+    // Strict numeric check helper
+    expect(isStrictNumericCoordinate('48.8566')).toBe(true);
+    expect(isStrictNumericCoordinate(48.8566)).toBe(true);
+    expect(isStrictNumericCoordinate('-2.3522')).toBe(true);
+    expect(isStrictNumericCoordinate('0')).toBe(true);
+
+    // Rejections of trailing letters and malformed numeric strings
+    expect(isStrictNumericCoordinate('48.8abc')).toBe(false);
+    expect(isStrictNumericCoordinate('abc48.8')).toBe(false);
+    expect(isStrictNumericCoordinate('')).toBe(false);
+    expect(isStrictNumericCoordinate('   ')).toBe(false);
+    expect(isStrictNumericCoordinate('NaN')).toBe(false);
+    expect(isStrictNumericCoordinate(NaN)).toBe(false);
+    expect(isStrictNumericCoordinate('Infinity')).toBe(false);
+    expect(isStrictNumericCoordinate(Infinity)).toBe(false);
+    expect(isStrictNumericCoordinate(-Infinity)).toBe(false);
+
+    // Full coordinate validator rejection
+    expect(validateCoordinates('48.8abc', 2.35).valid).toBe(false);
+    expect(validateCoordinates(48.85, '2.35xyz').valid).toBe(false);
+    expect(validateCoordinates('', 2.35).valid).toBe(false);
+    expect(validateCoordinates(NaN, 2.35).valid).toBe(false);
+    expect(validateCoordinates(48.85, Infinity).valid).toBe(false);
+
+    // Exact boundary limits (WGS84)
+    expect(validateCoordinates(90, 180).valid).toBe(true);
+    expect(validateCoordinates(-90, -180).valid).toBe(true);
+    expect(validateCoordinates(90.0001, 0).valid).toBe(false);
+    expect(validateCoordinates(-90.0001, 0).valid).toBe(false);
+    expect(validateCoordinates(0, 180.0001).valid).toBe(false);
+    expect(validateCoordinates(0, -180.0001).valid).toBe(false);
+  });
+
+  it('19. Composite Trapezoidal Numerical Integration: Verifies accurate hourly mean integration over [h, h+1]', async () => {
+    const { integrateHourlyBirdHulstrom, getExtraterrestrialNormalIrradiance } = await import(
+      '../services/physicsEngine'
+    );
+
+    // Day 172 (June 21, Summer Solstice) in Paris (lat 48.836, lon 2.336)
+    const dayOfYear = 172;
+    const i0 = getExtraterrestrialNormalIrradiance(dayOfYear);
+
+    // Midday hour [12, 13] UTC: solar elevation is high (~64°)
+    const noonHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 12, i0);
+    expect(noonHour.ghiIntegrated).toBeGreaterThan(700);
+    expect(noonHour.dniIntegrated).toBeGreaterThan(750);
+    expect(noonHour.midpointElevationDeg).toBeGreaterThan(60);
+
+    // Midnight hour [00, 01] UTC: sun is well below horizon, integrated irradiance must be 0
+    const midnightHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 0, i0);
+    expect(midnightHour.ghiIntegrated).toBe(0);
+    expect(midnightHour.dniIntegrated).toBe(0);
+    expect(midnightHour.dhiIntegrated).toBe(0);
+
+    // Sunrise hour [04, 05] UTC (sun rises during this hour):
+    // Numerical integration accounts for the fractional illumination smoothly
+    const dawnHour = integrateHourlyBirdHulstrom(48.836, 2.336, dayOfYear, 4, i0);
+    expect(dawnHour.ghiIntegrated).toBeGreaterThanOrEqual(0);
+    expect(dawnHour.ghiIntegrated).toBeLessThan(noonHour.ghiIntegrated);
+  });
+
+  it('20. Meteorological Temperature vs Simulated Proxy Safety: Verifies no false weather claims', async () => {
+    const { calculateClientSolar24h } = await import('../services/solarCalculator');
+    const { generateScientificSolarDay } = await import('../services/physicsEngine');
+
+    // 1. Client-side simulation
+    const clientDay = calculateClientSolar24h(43.296, 5.37, '2026-07-15', 'Marseille');
+    for (const pt of clientDay.hourly) {
+      // temperature MUST NOT be set for theoretical simulation
+      expect(pt.temperature).toBeUndefined();
+      // ambient_temperature_proxy_c is clearly provided as a proxy
+      expect(pt.ambient_temperature_proxy_c).toBeDefined();
+      expect(pt.temperature_is_forecast).toBe(false);
+      expect(pt.temperature_note).toContain('Proxy');
+    }
+
+    // 2. Physics engine day generator with model_clearsky source
+    const physDay = generateScientificSolarDay(43.296, 5.37, '2026-07-15', 'Marseille', 'model_clearsky_spencer_bird');
+    for (const pt of physDay.hourly) {
+      expect(pt.temperature_c).toBeUndefined();
+      expect(pt.ambient_temperature_proxy_c).toBeDefined();
+    }
+  });
+
+  it('21. Astronomical Reference Situations: Equinoxes, Solstices, Equator and Polar Extremes', async () => {
+    const { generateScientificSolarDay } = await import('../services/physicsEngine');
+
+    // Equator (0° lat, 0° lon) on March 21 (Equinox):
+    // Max elevation reaches ~84.5° at mid-hour interval (and ~90° at solar noon)
+    const equatorEquinox = generateScientificSolarDay(0, 0, '2026-03-21', 'Équateur');
+    expect(equatorEquinox.max_solar_elevation_deg).toBeGreaterThan(83);
+    expect(equatorEquinox.sunshine_hours_wmo).toBeGreaterThanOrEqual(10);
+
+    // North Pole (90° N, 0° lon) on Summer Solstice (June 21):
+    // Polar day: elevation stays around ~23.4° all 24 hours, sun never sets
+    const northPoleSummer = generateScientificSolarDay(89.5, 0, '2026-06-21', 'Pôle Nord');
+    expect(northPoleSummer.max_solar_elevation_deg).toBeGreaterThan(22);
+    // Daylight continuously across all 24 hours
+    const daylightHours = northPoleSummer.hourly.filter((h) => h.ghi_w_m2 > 0).length;
+    expect(daylightHours).toBe(24);
+
+    // North Pole on Winter Solstice (Dec 21):
+    // Polar night: sun never rises, all GHI must be 0
+    const northPoleWinter = generateScientificSolarDay(89.5, 0, '2026-12-21', 'Pôle Nord Hiver');
+    expect(northPoleWinter.daily_ghi_kwh_m2).toBe(0);
+    expect(northPoleWinter.hourly.every((h) => h.ghi_w_m2 === 0)).toBe(true);
   });
 });

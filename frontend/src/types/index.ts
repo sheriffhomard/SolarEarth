@@ -70,13 +70,15 @@ export interface HourlyRadiationPoint {
   dni: number;
   dhi: number;
   solar_elevation: number;
-  solar_azimuth?: number;
-  temperature?: number;
+  solar_azimuth?: number | null;
+  temperature?: number | null;
   ambient_temperature_proxy_c?: number;
+  temperature_source?: 'era5_reanalysis' | 'theoretical_proxy' | 'ground_station' | string;
   temperature_is_forecast?: boolean;
   temperature_note?: string;
   time_semantics?: 'hourly_integrated_mean' | 'instantaneous_sample';
   interval_duration_hours?: number;
+  is_simulated?: boolean;
   quality_flag?: string;
 }
 
@@ -94,13 +96,14 @@ export interface ScientificProvenance {
   source_id: string;
   source_name: string;
   source_version: string;
+  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year' | string;
   data_retrieval_date_utc: string;
   calculation_date_utc: string;
   spatial_resolution: string;
   temporal_resolution: string;
   solar_constant_w_m2: number;
   atmospheric_parameters?: AtmosphericModelParameters;
-  integration_method: 'hourly_mean_integration' | 'trapezoidal_integration';
+  integration_method: 'hourly_mean_integration' | 'trapezoidal_integration' | 'composite_trapezoidal_integration';
   time_semantics: 'hourly_integrated_mean' | 'instantaneous_sample';
   reference_benchmarks?: {
     station_name: string;
@@ -109,7 +112,14 @@ export interface ScientificProvenance {
     expected_clear_sky_summer_solstice_kwh: string;
     expected_clear_sky_winter_solstice_kwh: string;
   }[];
+  requested_date?: string;
+  actual_data_period?: { start: string; end: string } | null;
+  fallback_applied?: boolean;
+  fallback_reason?: string;
+  temperature_source?: 'era5_reanalysis' | 'theoretical_proxy' | string;
+  calculation_mode?: string;
   formulas: Record<string, ScientificIndicatorFormula>;
+  limits_and_disclaimers?: string[];
   quality_assessment: {
     status: 'measured' | 'satellite_derived' | 'model_clearsky' | 'estimated';
     missing_values_count: number;
@@ -124,19 +134,25 @@ export interface HourlyRadiationResponse {
   longitude: number;
   date: string;
   source: string;
+  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year' | 'reanalysis';
+  requested_date?: string;
+  actual_data_period?: { start: string; end: string } | null;
   units: string;
   daily_irradiation_kwh: number;
   peak_ghi: number;
   peak_dni: number;
   sunshine_hours: number;
   cached?: boolean;
-  cache_status?: 'fresh' | 'cached' | 'stale' | 'fallback_model';
+  cache_status?: 'fresh' | 'cached' | 'stale' | 'fallback_model' | 'bypass';
   cache_timestamp_utc?: string;
   product_name?: string;
   product_version?: string;
   daily_clearness_index_kt?: number;
   extraterrestrial_daily_kwh_m2?: number;
   is_simulated?: boolean;
+  fallback_applied?: boolean;
+  fallback_reason?: string;
+  pvgis_availability?: string;
   warning?: string;
   timezone?: string;
   local_civil_hours_count?: number;

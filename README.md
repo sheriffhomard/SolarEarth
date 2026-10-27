@@ -3,10 +3,10 @@
 [![Vite](https://img.shields.io/badge/Vite-8.3.4-646CFF.svg?logo=vite&logoColor=white)](https://vite.dev/)
 [![React](https://img.shields.io/badge/React-19.0.1-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.0.2-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-44%2F44_Passed-emerald.svg?logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-51%2F51_Passed-emerald.svg?logo=vitest&logoColor=white)](https://vitest.dev/)
 [![PWA Standalone](https://img.shields.io/badge/PWA-Smartphone_Installable-5A0FC8.svg?logo=pwa&logoColor=white)](https://web.dev/progressive-web-apps/)
 [![Storage Dual-Tier](https://img.shields.io/badge/Stockage-IndexedDB_(PWA)_%26_SQLite_(Dev)-0ea5e9.svg)](https://developer.mozilla.org/fr/docs/Web/API/IndexedDB_API)
-[![PVGIS Integration](https://img.shields.io/badge/PVGIS_v5.3-2005--2023_Archive-blue.svg)](https://re.jrc.ec.europa.eu/pvg_tools/en/)
+[![PVGIS Integration](https://img.shields.io/badge/PVGIS_v5.3-SARAH3_%2F_SARAH2_%2F_ERA5-blue.svg)](https://re.jrc.ec.europa.eu/pvg_tools/en/)
 
 ---
 
@@ -24,30 +24,31 @@ Pour concilier l'autonomie totale sur smartphone et la puissance de calcul sur s
 │ (Navigateur Mobile / Smartphone)     │ (Serveur Local / Desktop / CI)       │
 ├──────────────────────────────────────┼──────────────────────────────────────┤
 │ • Moteur d'exécution : Navigateur    │ • Moteur : Node.js (Vite) / Python   │
-│ • Stockage : IndexedDB localisé      │ • Stockage : Fichier SQLite 3 sur OS │
+│ • Stockage : IndexedDB localisé      │ • Stockage : Fichier SQLite 3 local  │
 │   (base SolarEarth_MobileDB)         │   (fichier local solar_earth.db)     │
-│ • Physique : Spencer & Bird 1981     │ • Services : FastAPI, Alembic,       │
-│   exécutés 100% en TypeScript client │   Pytest, Ruff, scripts batch        │
-│ • Zéro conteneur Docker requis       │ • Traitement de gros rasters SIG     │
-│ • Zéro serveur externe obligatoire   │ • Testé dans le job backend de la CI │
-│ • Zéro port réseau TCP exposé        │ • Accès système de fichiers natif    │
+│ • Physique : Spencer & Bird 1981     │ • Script d'init : init_sqlite.py     │
+│   exécutés 100% en TypeScript client │ • Services : FastAPI, Alembic,       │
+│ • Zéro conteneur Docker requis       │   Pytest, Ruff, scripts batch        │
+│ • Zéro serveur externe obligatoire   │ • Traitement de gros rasters SIG     │
+│ • Zéro port réseau TCP exposé        │ • Testé dans le job backend de la CI │
+│ • Zéro substitution silencieuse      │ • Accès système de fichiers natif    │
 └──────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
 ### Clarification fondamentale sur le stockage SQLite vs IndexedDB :
 - **Sur smartphone (PWA installée ou navigateur mobile)** : SQLite ne s'exécute pas directement dans le système de fichiers du téléphone. Le stockage opérationnel réel est **IndexedDB** (`SolarEarth_MobileDB`), intégré au navigateur dans son bac à sable sécurisé, 100% hors-ligne et sans ouverture de port réseau.
-- **Sur ordinateur / serveur de développement** : La base **SQLite 3 (`solar_earth.db`)** est gérée par le runtime Node.js ou le backend Python FastAPI pour la persistance locale de développement, l'ingestion batch de données satellitaires et les tests automatisés.
+- **Sur ordinateur / serveur de développement** : La base **SQLite 3 (`solar_earth.db`)** est gérée par le runtime Node.js ou le backend Python FastAPI. Ce fichier binaire de développement est ignoré par Git (`.gitignore`). Il peut être initialisé ou réinitialisé à tout moment via le script reproductible `python scripts/init_sqlite.py`.
 
 ---
 
 ## 2. Intégration PVGIS & Rigueur sur les Dates
 
 ### A. Bornes Strictes de l'Archive Satellitaire (2005–2023)
-- L'archive officielle des observations satellitaires **PVGIS SARAH-2 / SARAH-3 et ERA5** de la Commission Européenne couvre strictement les années **2005 à 2023**.
+- L'archive officielle des observations satellitaires **PVGIS SARAH-3, SARAH-2 et ERA5** de la Commission Européenne couvre strictement les années **2005 à 2023** (SARAH-2 s'arrêtant en 2020).
 - **Suppression définitive de la substitution silencieuse** : les versions antérieures substituaient silencieusement l'année 2020 lorsqu'une date future ou passée était demandée. Ce comportement trompeur a été totalement éliminé.
 - **Comportement actuel** :
-  - Pour toute date comprise entre 2005 et 2023 : requête effective vers l'API officielle PVGIS `seriescalc` avec la géométrie horizontale (`angle=0`, `aspect=0`, `components=1`, `pvcalculation=0`).
-  - Pour toute date postérieure à 2023 (ex: 2026) ou antérieure à 2005 : l'application indique clairement `data_type: 'simulated_clearsky'`, active le repli explicite vers le modèle astronomique Spencer & Bird (1981), attribue `actual_data_period: null`, et renseigne `fallback_applied: true` avec la justification scientifique dans `fallback_reason`.
+  - Pour toute date couverte par le produit demandé : requête effective vers l'API officielle PVGIS `seriescalc` avec sélection explicite de `raddatabase` (`PVGIS-SARAH3` par défaut) et géométrie horizontale (`angle=0`, `aspect=0`, `components=1`, `pvcalculation=0`).
+  - Pour toute date postérieure à l'archive (ex: 2026) ou antérieure : l'application indique clairement `data_type: 'simulated_clearsky'`, active le repli explicite vers le modèle astronomique Spencer & Bird (1981), attribue `actual_data_period: null`, et renseigne `fallback_applied: true` avec la justification scientifique dans `fallback_reason`.
 
 ### B. Contrôle Fiable de Disponibilité PVGIS (`probePvgisStatus`)
 - L'application rejette fermement les codes HTTP 400 (Bad Request) ou 404 comme preuve de disponibilité fonctionnelle.
@@ -55,16 +56,18 @@ Pour concilier l'autonomie totale sur smartphone et la puissance de calcul sur s
   - `available` : HTTP 200 avec payload JSON valide contenant `outputs.hourly`.
   - `invalid_request` : HTTP 400 ou 404 (paramètres incorrects ou route introuvable).
   - `unavailable` : HTTP 500, 502 ou 503 (panne serveur JRC).
-  - `timeout` : délai d'attente réseau dépassé.
+  - `timeout` : délai d'attente réseau dépassé (avec annulation garantie du timer via bloc `finally`).
   - `unreachable` : échec de résolution DNS ou déconnexion totale.
 
-### C. Sémantique Physique des Champs PVGIS
+### C. Validation Horaire et Physique des Champs PVGIS
+- **Validation stricte** : avant toute transformation, la série de 24 heures est validée chronologiquement. Les valeurs manquantes (null ou undefined), non finies (NaN, Infinity) ou physiquement aberrantes ($Gb(i), Gd(i) < -0.5$ ou $> I_{0n}$, $H_{sun} \notin [-90^\circ, 90^\circ]$) sont détectées et provoquent le rejet du payload. L'application **interdit formellement** de remplacer les valeurs manquantes par 0.
 - `Gb(i)` : Irradiance directe reçue sur le plan horizontal ($W/m^2$).
 - `Gd(i)` : Irradiance diffuse horizontale ($DHI$, $W/m^2$).
 - `Gr(i)` : Composante réfléchie par le sol ($0\,W/m^2$ sur plan horizontal orienté vers le ciel).
 - `GHI` : Reconstitué rigoureusement par $GHI = Gb(i) + Gd(i)$.
-- `DNI` : Rayonnement direct normal, dérivé via $DNI = \frac{Gb(i)}{\sin(H_{sun})}$ lorsque la hauteur solaire $H_{sun} > 1.0^\circ$.
-- `T2m` : Température à 2 mètres issue de la réanalyse atmosphérique mondiale ERA5 du CEPMMT (distincte du proxy thermique théorique utilisé en simulation pure).
+- `DNI` : Rayonnement direct normal, dérivé via $DNI = \frac{Gb(i)}{\sin(H_{sun})}$ lorsque la hauteur solaire $H_{sun} > 1.0^\circ$. Aux angles rasants du lever/coucher de soleil ($0^\circ < H_{sun} \le 1.0^\circ$), le DNI est plafonné à la constante solaire extraterrestre $I_0$ pour éviter l'explosion de singularité numérique. De nuit ($H_{sun} \le 0^\circ$), $DNI = 0$, $GHI = 0$, $DHI = 0$.
+- `T2m` : Température à 2 mètres issue de la réanalyse atmosphérique mondiale ERA5 du CEPMMT.
+- **Transparence métrologique** : le statut est qualifié de `satellite_retrieval` (aucun label indu de validation au sol `satellite_validated` n'est affiché sans station radiométrique indépendante).
 
 ---
 
@@ -98,6 +101,86 @@ Une rigueur scientifique absolue est appliquée dans la qualification des source
 │              CATÉGORISATION SCIENTIFIQUE DES FOURNISSEURS                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 1. RAYONNEMENT SOLAIRE DE SURFACE (GHI, DNI, DHI en W/m² et kWh/m²)         │
+│ • PVGIS (JRC Commission Européenne) : SARAH-3, SARAH-2 & ERA5               │
+│ • Modèle analytique ciel clair : Spencer (1971) & Bird & Hulstrom (1981)   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 2. MÉTÉO SPATIALE & GÉOMAGNÉTISME (Indicateurs d'activité coronale)        │
+│ • NOAA SWPC : Indice géomagnétique Kp (0-9), Vent solaire, Flux de protons  │
+│ • NASA DONKI : Éjections de masse coronale (CME), Éruptions solaires        │
+│ • SIDC / SILSO : Nombre international de taches solaires (SSN)             │
+│ • Attention : la météo spatiale influence les réseaux et aurores polaires, │
+│   mais n'est pas une mesure directe de l'irradiance reçue au sol (GHI).     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 5. Formules Physiques & Clôture Radiative
+
+L'IHM et l'API exposent les formules mathématiques exactes et leur traçabilité :
+- **Irradiation journalière ($H_d$)** : $H_d = \frac{1}{1000} \sum_{h=0}^{23} GHI_h \cdot 1\,\text{h}$ en $\text{kWh/m}^2$.
+- **Pic d'irradiance ($GHI_{max}$)** : $GHI_{max} = \max_{h} (GHI_h)$ en $\text{W/m}^2$.
+- **Clôture radiative** : $GHI = DNI \cdot \sin(\alpha) + DHI$, où $\alpha$ est la hauteur angulaire du Soleil.
+- **Intégration temporelle** : quadrature composite trapézoïdale sur chaque intervalle horaire pour intégrer rigoureusement la variation continue de la hauteur solaire.
+
+---
+
+## 6. Audit & Cohérence CI GitHub Actions
+
+Le workflow GitHub Actions (`.github/workflows/ci.yml`) teste les deux écosystèmes en parallèle :
+
+1. **Job `frontend` (PWA Client Autonome)** :
+   - Environnement : Ubuntu Latest, Node.js 22 (`npm ci` via `package-lock.json`).
+   - Typage statique strict : `npm run typecheck` (`tsc --noEmit`).
+   - Suite de tests unitaires Vitest : **51/51 tests validés** (`npm run test:run`).
+     - `src/test/pvgis.test.ts` : 23 tests (disponibilité PVGIS, HTTP 400/404, limites d'archive 2005-2023, sémantique $Gb(i)$, $Gd(i)$, $H_{sun}$, angles rasants au lever/coucher, métadonnées dynamiques SARAH-3/ERA5, validation du payload horaire, rejet de mise à zéro artificielle, nettoyage de timer, endpoints de santé).
+     - `src/test/physics.test.ts` : 21 tests (équations Bird & Hulstrom, intégration horaire, masse d'air Kasten & Young, benchmarks de Carpentras/Paris/NREL/Tamanrasset).
+     - `src/test/app.test.tsx` : 7 tests (IHM, graphiques de rayonnement, badges PVGIS vs Ciel Clair).
+   - Compilation de production PWA : `npm run build` (Service Worker et manifest).
+
+2. **Job `backend` (Station Développeur / Services Complémentaires)** :
+   - Environnement : Ubuntu Latest, Python 3.12.
+   - Dépendances géospatiales système : `libpq-dev`, `libgeos-dev`.
+   - Linter qualité de code : `ruff check backend`.
+   - Suite de tests Pytest avec couverture : `pytest backend/tests -v --cov=backend/app`.
+
+---
+
+## 7. Procédure de Reproduction Pas à Pas
+
+### Étape 1 : Cloner et installer les dépendances
+```bash
+git clone <URL_DU_DEPOT> solar-earth
+cd solar-earth
+npm ci
+```
+
+### Étape 2 : Contrôle des types TypeScript
+```bash
+npm run typecheck
+```
+
+### Étape 3 : Exécution de la suite complète de tests (Vitest)
+```bash
+npm run test:run
+```
+*Résultat attendu : 51 tests réussis (23 tests PVGIS & API + 21 tests physiques Bird & Hulstrom + 7 tests UI et navigation).*
+
+### Étape 4 : Compilation de production (PWA)
+```bash
+npm run build
+```
+
+### Étape 5 (Optionnel) : Initialiser la base SQLite de développement
+```bash
+python scripts/init_sqlite.py
+```
+
+### Étape 6 : Lancement du serveur local
+```bash
+npm run dev
+```
+Ouvrez votre navigateur sur : **`http://localhost:3000`**.
 │ Mesure et modélisation du flux de photons atteignant la surface terrestre.  │
 │                                                                             │
 │ • PVGIS JRC : Satellites géostationnaires MSG / SARAH-2 et réanalyses ERA5. │

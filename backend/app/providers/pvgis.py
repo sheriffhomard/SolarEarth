@@ -147,6 +147,7 @@ class PVGISProvider(SolarDataProvider):
                             "startyear": query_year,
                             "endyear": query_year,
                             "outputformat": "json",
+                            "raddatabase": "PVGIS-SARAH3",
                             "pvcalculation": 0,
                             "components": 1,
                             "trackingtype": 0,
@@ -191,8 +192,8 @@ class PVGISProvider(SolarDataProvider):
 
         now_iso = datetime.now(timezone.utc).isoformat()
         provenance = {
-            "source_id": "pvgis_jrc_sarah2" if data_source == "pvgis_jrc_seriescalc" else "spencer_bird_clearsky",
-            "source_name": "Commission Européenne JRC — PVGIS v5.3 (SARAH-2 / ERA5)" if data_source == "pvgis_jrc_seriescalc" else "Modèle Physique Ciel Clair Spencer & Bird (1981)",
+            "source_id": "pvgis_jrc_sarah3" if data_source == "pvgis_jrc_seriescalc" else "spencer_bird_clearsky",
+            "source_name": "Commission Européenne JRC — PVGIS v5.3 (SARAH-3 / ERA5)" if data_source == "pvgis_jrc_seriescalc" else "Modèle Physique Ciel Clair Spencer & Bird (1981)",
             "source_version": "v5.3" if data_source == "pvgis_jrc_seriescalc" else "1.0",
             "data_type": "historical_satellite" if data_source == "pvgis_jrc_seriescalc" else "simulated_clearsky",
             "requested_date": date_str,
@@ -206,7 +207,7 @@ class PVGISProvider(SolarDataProvider):
             "temporal_resolution": "1 heure (moyenne intégrée)",
             "solar_constant_w_m2": 1361.2,
             "limits_and_disclaimers": [
-                "Archive satellitaire PVGIS SARAH-2 / ERA5 disponible uniquement de 2005 à 2023.",
+                "Archive satellitaire PVGIS SARAH-3 / ERA5 disponible uniquement de 2005 à 2023.",
                 "En dehors de cette plage ou en cas de panne réseau, bascule explicite vers simulation astronomique sans substitution silencieuse de date.",
                 "Température T2m issue de réanalyse ERA5 (pour PVGIS) ou proxy thermique théorique (pour modèle simulé).",
             ],
@@ -240,7 +241,7 @@ class PVGISProvider(SolarDataProvider):
                 },
             },
             "quality_assessment": {
-                "status": "satellite_derived" if data_source == "pvgis_jrc_seriescalc" else "model_clearsky",
+                "status": "satellite_retrieval" if data_source == "pvgis_jrc_seriescalc" else "model_clearsky",
                 "missing_values_count": 0,
                 "outliers_detected": 0,
                 "closure_equation_verified": True,
@@ -269,7 +270,7 @@ class PVGISProvider(SolarDataProvider):
     def _extract_matching_day(
         self, hourly_entries: List[Dict], target_date: date, date_str: str
     ) -> List[Dict[str, Any]]:
-        """Extracts 24 hours corresponding to target date from PVGIS seriescalc payload."""
+        """Extracts 24 hours corresponding to target date from PVGIS seriescalc payload with strict validation."""
         day_points = []
         target_ymd = target_date.strftime("%Y%m%d")
 
@@ -277,28 +278,67 @@ class PVGISProvider(SolarDataProvider):
             time_raw = str(entry.get("time", ""))  # e.g. "20200615:0010" or "20200615:0000"
             if len(time_raw) >= 8 and time_raw[:8] == target_ymd:
                 hour = int(time_raw[9:11]) if len(time_raw) >= 11 else len(day_points)
-                # In PVGIS seriescalc on horizontal plane (angle=0):
-                # Gb(i) is direct beam on horizontal (W/m²)
-                # Gd(i) is diffuse horizontal (W/m²)
-                # Gr(i) is ground reflected (0 on horizontal)
-                # H_sun is solar elevation (°)
-                # T2m is 2m ambient temperature (°C)
-                gb_i = float(entry.get("Gb(i)", entry.get("Gb(n)", 0.0)))
-                gd_i = float(entry.get("Gd(i)", entry.get("Gd(h)", 0.0)))
-                elevation = float(entry.get("H_sun", 0.0))
-                temp = float(entry.get("T2m", 15.0))
+                # Validation: check field presence without substituting missing values with 0
+                if "Gb(i)" not in entry and "Gb(n)" not in entry:
+                    return []
+                if "Gd(i)" not in entry and "Gd(h)" not in entry:
+                    return []
+                if "H_sun" not in entry:
+                    return []
 
-                # GHI = Gb(i) + Gd(i)
-                ghi = float(entry.get("G(h)", gb_i + gd_i))
+                raw_gb = entry.get("Gb(i)", entry.get("Gb(n)"))
+                raw_gd = entry.get("Gd(i)", entry.get("Gd(h)"))
+                raw_elev = entry.get("H_sun")
+                raw_temp = entry.get("T2m", 15.0)
 
-                # DNI = Gb(i) / sin(H_sun) when elevation > 1 deg
-                sin_elev = math.sin(math.radians(elevation))
-                if sin_elev > 0.0175 and gb_i > 0:
-                    dni = gb_i / sin_elev
-                else:
+                if raw_gb is None or raw_gd is None or raw_elev is None:
+                    return []
+
+                try:
+                    gb_i = float(raw_gb)
+                    gd_i = float(raw_gd)
+                    elevation = float(raw_elev)
+                    temp = float(raw_temp)
+                except (ValueError, TypeError):
+                    return []
+
+                # Physical range validation
+                if math.isnan(gb_i) or math.isnan(gd_i) or math.isnan(elevation) or math.isnan(temp):
+                    return []
+                if math.isinf(gb_i) or math.isinf(gd_i) or math.isinf(elevation) or math.isinf(temp):
+                    return []
+                if gb_i < -0.5 or gb_i > 1420.0 or gd_i < -0.5 or gd_i > 1420.0:
+                    return []
+                if elevation < -90.0 or elevation > 90.0:
+                    return []
+                if temp < -90.0 or temp > 65.0:
+                    return []
+
+                # Normalize small noise
+                gb_i = max(0.0, gb_i)
+                gd_i = max(0.0, gd_i)
+
+                # Horizontal plane: GHI = Gb(i) + Gd(i)
+                ghi = gb_i + gd_i
+
+                # DNI calculation with grazing angle protection
+                if elevation <= 0.0:
                     dni = 0.0
-
-                dhi = gd_i
+                    ghi = 0.0
+                    dhi = 0.0
+                elif elevation <= 1.0:
+                    # Near horizon: cap at extraterrestrial solar constant (1361.2 W/m2)
+                    sin_elev = math.sin(math.radians(elevation))
+                    if sin_elev > 0.0:
+                        raw_dni = gb_i / sin_elev
+                        dni = min(raw_dni, 1361.2)
+                    else:
+                        dni = 0.0
+                    dhi = gd_i
+                else:
+                    sin_elev = math.sin(math.radians(elevation))
+                    dni = min(gb_i / sin_elev, 1361.2)
+                    dhi = gd_i
 
                 day_points.append({
                     "hour": hour,
@@ -309,7 +349,7 @@ class PVGISProvider(SolarDataProvider):
                     "solar_elevation": round(elevation, 2),
                     "solar_azimuth": None,
                     "temperature": round(temp, 1),
-                    "quality_flag": "pvgis_validated",
+                    "quality_flag": "satellite_retrieval",
                 })
 
         return day_points if len(day_points) == 24 else []

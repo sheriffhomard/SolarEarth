@@ -51,7 +51,8 @@ export type CacheFreshnessStatus =
   | 'fresh'          // Live from provider within freshness window
   | 'cached'         // Valid cached response from IndexedDB / local cache
   | 'stale'          // Expired cache served offline as fallback
-  | 'fallback_model';// Offline astronomical calculation
+  | 'fallback_model' // Offline astronomical calculation
+  | 'bypass';        // Direct computation bypass
 
 /**
  * Normalized observation point for a single physical variable.
@@ -78,6 +79,7 @@ export interface CommonHourlyObservation {
   solar_elevation_deg: number;
   solar_azimuth_deg?: number;
   temperature_c?: number;
+  ambient_temperature_proxy_c?: number;
   clearness_index_kt?: number;
   quality_flag: QualityFlag;
 }

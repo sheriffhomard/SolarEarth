@@ -9,25 +9,35 @@ import { mobileDatabase } from './indexedDbService';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export async function fetchHealth(): Promise<HealthResponse> {
+  const clientStorageCheck = await mobileDatabase.checkHealth();
+
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return data;
+    const serverData: HealthResponse = await res.json();
+    return {
+      ...serverData,
+      components: {
+        ...(serverData.components || {}),
+        client_indexeddb: clientStorageCheck.verified
+          ? `IndexedDB vérifié sur smartphone (${clientStorageCheck.locationCount} stations, ${clientStorageCheck.recordCount} calculs)`
+          : 'IndexedDB non initialisé / mémoire de secours',
+      },
+    };
   } catch {
     // Real component verification on the client / offline smartphone environment
-    const storageCheck = await mobileDatabase.checkHealth();
     return {
-      status: storageCheck.verified ? 'ok' : 'degraded',
+      status: clientStorageCheck.verified ? 'ok' : 'degraded',
       service: 'solar-earth-api',
       version: APP_ENV_CONFIG.APP_VERSION,
-      database: storageCheck.message,
-      database_verified: storageCheck.verified,
+      database: clientStorageCheck.message,
+      database_verified: clientStorageCheck.verified,
       timestamp: new Date().toISOString(),
       components: {
-        client_persistence: storageCheck.type === 'indexeddb'
-          ? `IndexedDB (Vérifiée: ${storageCheck.locationCount} stations, ${storageCheck.recordCount} calculs)`
-          : 'Mémoire vive de secours (Non persistante)',
+        client_persistence:
+          clientStorageCheck.type === 'indexeddb'
+            ? `IndexedDB (Vérifiée: ${clientStorageCheck.locationCount} stations, ${clientStorageCheck.recordCount} calculs)`
+            : 'Mémoire vive de secours (Non persistante)',
         solar_physics_engine: 'Spencer 1971 / Bird & Hulstrom 1981 (Opérationnel)',
         pvgis_provider: 'available (avec repli local autonome)',
       },
@@ -174,33 +184,49 @@ export async function fetchHourlyRadiation(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data: HourlyRadiationResponse = await res.json();
 
-    const provenance = data.provenance || generateScientificProvenance(
-      normLat,
-      normLon,
-      targetDate,
-      data.daily_irradiation_kwh,
-      data.peak_ghi,
-      data.peak_dni,
-      data.sunshine_hours,
-      'pvgis_jrc_sarah2'
-    );
+    const isSimulated = Boolean(data.is_simulated || data.source?.includes('simulated'));
+    const effectiveSource = isSimulated ? 'simulated_clearsky_model' : 'pvgis_jrc_sarah2';
+
+    const provenance =
+      data.provenance ||
+      generateScientificProvenance(
+        normLat,
+        normLon,
+        targetDate,
+        data.daily_irradiation_kwh,
+        data.peak_ghi,
+        data.peak_dni,
+        data.sunshine_hours,
+        effectiveSource
+      );
 
     const result: HourlyRadiationResponse = {
       ...data,
+      source: data.source || (isSimulated ? 'simulated_clearsky_spencer_bird' : 'pvgis_jrc_sarah2'),
+      is_simulated: isSimulated,
       location_name: locationName || data.location_name || `${normLat}°, ${normLon}°`,
       cached: false,
-      cache_status: 'fresh',
+      cache_status: data.cache_status || 'fresh',
       cache_timestamp_utc: new Date().toISOString(),
-      product_name: 'PVGIS-SARAH2 / JRC European Commission',
-      product_version: 'v5.3',
+      product_name:
+        data.product_name ||
+        (isSimulated
+          ? 'Modèle Solaire Ciel Clair (Simulation Locale - Hors-Ligne)'
+          : 'PVGIS-SARAH2 / JRC European Commission'),
+      product_version: data.product_version || (isSimulated ? 'v2.0 (Spencer / Bird)' : 'v5.3'),
+      warning:
+        data.warning ||
+        (isSimulated
+          ? 'DONNÉES SIMULÉES : Calculées par le modèle théorique Spencer & Bird. Ces données ne proviennent pas des satellites PVGIS JRC.'
+          : undefined),
       provenance,
     };
 
-    // Store in scientific cache with 24h fresh TTL, 7 days stale fallback
+    // Store in scientific cache with appropriate provider tier
     scientificCache.set(
       cacheKey,
       result,
-      'pvgis_jrc',
+      isSimulated ? 'model_clearsky' : 'pvgis_jrc',
       CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_FRESH_MS,
       CACHE_TTL_TIERS.HOURLY_OBSERVATIONS_MAX_STALE_MS
     );
@@ -233,7 +259,15 @@ export async function fetchHourlyRadiation(
       latitude: normLat,
       longitude: normLon,
       date: targetDate,
-      source: 'simulated_clearsky_model',
+      source: 'simulated_clearsky_spencer_bird',
+      data_type: 'simulated_clearsky',
+      requested_date: targetDate,
+      actual_data_period: {
+        start: `${targetDate}T00:00:00Z`,
+        end: `${targetDate}T23:00:00Z`,
+      },
+      fallback_applied: true,
+      fallback_reason: 'client_offline_or_network_error',
       units: 'W/m² for irradiance, kWh/m² for irradiation',
       daily_irradiation_kwh: physicalDay.daily_ghi_kwh_m2,
       peak_ghi: physicalDay.peak_ghi_w_m2,
@@ -258,8 +292,14 @@ export async function fetchHourlyRadiation(
         dhi: h.dhi_w_m2,
         solar_elevation: h.solar_elevation_deg,
         solar_azimuth: h.solar_azimuth_deg,
-        temperature: h.temperature_c,
-        quality_flag: h.quality_flag,
+        temperature: undefined,
+        ambient_temperature_proxy_c: h.ambient_temperature_proxy_c,
+        temperature_is_forecast: false,
+        temperature_note:
+          'Proxy physique indicatif (estimation théorique simplifiée, non issu d’une prévision ou station météo).',
+        time_semantics: 'hourly_integrated_mean',
+        interval_duration_hours: 1.0,
+        quality_flag: 'model_clearsky',
       })),
     };
 
