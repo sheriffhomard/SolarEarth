@@ -21,6 +21,7 @@ import { UnifiedSolarObservationRecord, CacheFreshnessStatus } from '../../types
 import { fetchHourlyRadiation } from '../../services/api';
 import { mobileDatabase, MobileLocation } from '../../services/indexedDbService';
 import { ScientificAuditModal } from './ScientificAuditModal';
+import { InfoTooltip } from '../common/InfoTooltip';
 
 export const SolarRadiationChart: React.FC = () => {
   const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
@@ -634,87 +635,150 @@ export const SolarRadiationChart: React.FC = () => {
 
       {/* KPI Ribbon: High-precision scientific metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-        <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
-            Irradiation Journalière
+        <div className="p-3 bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Irradiation Journalière
+            </span>
+            <InfoTooltip
+              title="Irradiation Journalière (H_d)"
+              description="Énergie radiative totale reçue au mètre carré sur la journée, obtenue par intégration des moyennes horaires de GHI."
+              formula="H_d = (∑ GHI_h · 1h) / 1000"
+              unit="kWh/m²/jour"
+              standard="WMO No. 8"
+            />
           </div>
-          <div className="mt-1 text-2xl font-mono font-bold text-slate-100 tabular-nums">
+          <div className="mt-1 text-2xl font-mono font-bold text-slate-900 dark:text-slate-100 tabular-nums">
             {radiationData?.daily_irradiation_kwh ?? '—'}
-            <span className="text-xs font-mono text-slate-400 ml-1.5 font-normal">kWh/m²</span>
+            <span className="text-xs font-mono text-slate-500 dark:text-slate-400 ml-1.5 font-normal">kWh/m²</span>
           </div>
           <div className="text-[11px] text-slate-500 font-mono mt-0.5">
             Énergie totale ({radiationData?.daily_irradiation_kwh ? (radiationData.daily_irradiation_kwh * 1000).toLocaleString() : '—'} Wh/m²)
           </div>
         </div>
 
-        <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-amber-400/90">
-            Pic d'Irradiance (GHI)
+        <div className="p-3 bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-amber-600 dark:text-amber-400/90">
+              Pic d'Irradiance (GHI)
+            </span>
+            <InfoTooltip
+              title="Irradiance Globale Horizontale (GHI)"
+              description="Somme du rayonnement solaire direct projeté et du rayonnement diffus arrivant sur le plan horizontal au sol."
+              formula="GHI = DNI · sin(hauteur_solaire) + DHI"
+              unit="W/m²"
+              standard="Gueymard (2004)"
+            />
           </div>
-          <div className="mt-1 text-2xl font-mono font-bold text-amber-300 tabular-nums">
+          <div className="mt-1 text-2xl font-mono font-bold text-amber-600 dark:text-amber-300 tabular-nums">
             {radiationData?.peak_ghi ?? '—'}
-            <span className="text-xs font-mono text-slate-400 ml-1.5 font-normal">W/m²</span>
+            <span className="text-xs font-mono text-slate-500 dark:text-slate-400 ml-1.5 font-normal">W/m²</span>
           </div>
           <div className="text-[11px] text-slate-500 font-mono mt-0.5">Puissance surfacique max</div>
         </div>
 
-        <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-orange-400/90">
-            Insolation OMM (DNI)
+        <div className="p-3 bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-orange-600 dark:text-orange-400/90">
+              Insolation OMM (DNI)
+            </span>
+            <InfoTooltip
+              title="Durée d'Insolation OMM (DNI ≥ 120 W/m²)"
+              description="Nombre d'heures pendant lesquelles le rayonnement direct normal dépasse le seuil standard de l'Organisation Météorologique Mondiale."
+              formula="S_h = count(DNI_h ≥ 120 W/m²)"
+              unit="heures / jour"
+              standard="WMO Guide No. 8"
+            />
           </div>
-          <div className="mt-1 text-2xl font-mono font-bold text-orange-300 tabular-nums">
+          <div className="mt-1 text-2xl font-mono font-bold text-orange-600 dark:text-orange-300 tabular-nums">
             {radiationData?.sunshine_hours ?? '—'}
-            <span className="text-xs font-mono text-slate-400 ml-1.5 font-normal">h</span>
+            <span className="text-xs font-mono text-slate-500 dark:text-slate-400 ml-1.5 font-normal">h</span>
           </div>
           <div className="text-[11px] text-slate-500 font-mono mt-0.5">Seuil OMM: DNI ≥ 120 W/m²</div>
         </div>
 
-        <div className="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-sky-400">
-            Hauteur Solaire Max
+        <div className="p-3 bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 rounded-xl shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-sky-600 dark:text-sky-400">
+              Hauteur Solaire Max
+            </span>
+            <InfoTooltip
+              title="Élévation Solaire Maximale (Midi Vrai)"
+              description="Angle angulaire maximal du disque solaire au-dessus de l'horizon astronomique local atteint au midi solaire vrai."
+              formula="sin(α) = sin(φ)·sin(δ) + cos(φ)·cos(δ)·cos(ω)"
+              unit="degrés (°)"
+              standard="Spencer (1971)"
+            />
           </div>
-          <div className="mt-1 text-2xl font-mono font-bold text-sky-300 tabular-nums">
+          <div className="mt-1 text-2xl font-mono font-bold text-sky-600 dark:text-sky-300 tabular-nums">
             {maxElevation.toFixed(1)}
-            <span className="text-xs font-mono text-slate-400 ml-1.5 font-normal">°</span>
+            <span className="text-xs font-mono text-slate-500 dark:text-slate-400 ml-1.5 font-normal">°</span>
           </div>
           <div className="text-[11px] text-slate-500 font-mono mt-0.5">Élévation au midi solaire</div>
         </div>
       </div>
 
       {/* Interactive SVG Chart Viewport */}
-      <div className="relative border border-slate-800 rounded-xl bg-slate-950 p-3 overflow-hidden">
+      <div className="relative border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-950 p-3 overflow-hidden shadow-sm">
         {/* Layer Visibility Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2 px-2 text-xs font-mono">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setShowGhi(!showGhi)}
-              className={`flex items-center gap-1.5 transition-opacity ${
-                showGhi ? 'opacity-100 font-semibold text-amber-400' : 'opacity-40 text-slate-500'
-              }`}
-            >
-              <span className="w-3 h-1 bg-amber-400 rounded-full" />
-              <span>GHI (Global)</span>
-            </button>
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowGhi(!showGhi)}
+                className={`flex items-center gap-1.5 transition-opacity cursor-pointer ${
+                  showGhi ? 'opacity-100 font-semibold text-amber-500' : 'opacity-40 text-slate-500'
+                }`}
+              >
+                <span className="w-3 h-1 bg-amber-400 rounded-full" />
+                <span>GHI (Global)</span>
+              </button>
+              <InfoTooltip
+                title="GHI (Global Horizontal Irradiance)"
+                description="Rayonnement global sur plan horizontal."
+                formula="GHI = DNI · sin(α) + DHI"
+                unit="W/m²"
+              />
+            </div>
 
-            <button
-              onClick={() => setShowDni(!showDni)}
-              className={`flex items-center gap-1.5 transition-opacity ${
-                showDni ? 'opacity-100 font-semibold text-orange-400' : 'opacity-40 text-slate-500'
-              }`}
-            >
-              <span className="w-3 h-1 bg-orange-400 rounded-full" />
-              <span>DNI (Direct)</span>
-            </button>
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowDni(!showDni)}
+                className={`flex items-center gap-1.5 transition-opacity cursor-pointer ${
+                  showDni ? 'opacity-100 font-semibold text-orange-500' : 'opacity-40 text-slate-500'
+                }`}
+              >
+                <span className="w-3 h-1 bg-orange-400 rounded-full" />
+                <span>DNI (Direct)</span>
+              </button>
+              <InfoTooltip
+                title="DNI (Direct Normal Irradiance)"
+                description="Faisceau direct perpendiculaire aux rayons solaires."
+                formula="DNI = Gb(i) / sin(α_apparent)"
+                unit="W/m²"
+              />
+            </div>
 
-            <button
-              onClick={() => setShowDhi(!showDhi)}
-              className={`flex items-center gap-1.5 transition-opacity ${
-                showDhi ? 'opacity-100 font-semibold text-sky-400' : 'opacity-40 text-slate-500'
-              }`}
-            >
-              <span className="w-3 h-1 bg-sky-400 rounded-full" />
-              <span>DHI (Diffus)</span>
-            </button>
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowDhi(!showDhi)}
+                className={`flex items-center gap-1.5 transition-opacity cursor-pointer ${
+                  showDhi ? 'opacity-100 font-semibold text-sky-500' : 'opacity-40 text-slate-500'
+                }`}
+              >
+                <span className="w-3 h-1 bg-sky-400 rounded-full" />
+                <span>DHI (Diffus)</span>
+              </button>
+              <InfoTooltip
+                title="DHI (Diffuse Horizontal Irradiance)"
+                description="Rayonnement diffus dispersé par l'atmosphère."
+                formula="DHI = Gd(i)"
+                unit="W/m²"
+              />
+            </div>
           </div>
 
           <div className="text-[11px] text-slate-500">

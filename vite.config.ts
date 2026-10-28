@@ -40,7 +40,7 @@ function isValidCalendarDate(dateStr: string): { valid: boolean; error?: string 
 // NO server secrets (database credentials, private keys) are ever exposed to the client bundle.
 const PUBLIC_FRONTEND_ENV: Record<string, string> = {
   VITE_APP_NAME: 'Solar Earth',
-  VITE_APP_VERSION: '0.2.0',
+  VITE_APP_VERSION: '0.3.0',
   VITE_API_BASE_URL: '/api/v1',
   VITE_PVGIS_BASE_URL: 'https://re.jrc.ec.europa.eu/api/v5_3/',
   VITE_PVGIS_ENABLED: 'true',
@@ -51,7 +51,7 @@ const PUBLIC_FRONTEND_ENV: Record<string, string> = {
 // Internal server defaults (kept server-side, not exposed to browser bundle)
 const SERVER_INTERNAL_ENV: Record<string, string> = {
   APP_NAME: 'Solar Earth',
-  APP_VERSION: '0.2.0',
+  APP_VERSION: '0.3.0',
   APP_ENV: 'development',
   LOG_LEVEL: 'INFO',
   DEBUG: 'false',

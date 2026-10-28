@@ -34,32 +34,32 @@ export const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
       {/* Hero / Header Section */}
-      <section className="border-b border-slate-800 pb-6">
+      <section className="border-b border-slate-200 dark:border-slate-800 pb-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-mono text-amber-400 mb-1">
+            <div className="flex items-center gap-2 text-xs font-mono text-amber-600 dark:text-amber-400 mb-1 font-semibold">
               <span>SOLAR EARTH OBSERVATION PLATFORM</span>
-              <span className="text-slate-600" aria-hidden="true">·</span>
-              <span>PHASE V0.2 INTÉGRATION PVGIS</span>
+              <span className="text-slate-400 dark:text-slate-600" aria-hidden="true">·</span>
+              <span>PHASE V0.3 SYSTÈME & PARAMÈTRES</span>
             </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-100 tracking-tight">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
               SOLAR EARTH
             </h1>
-            <p className="mt-2 text-sm text-slate-400 max-w-2xl leading-relaxed">
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
               Mesure, calcul et visualisation du rayonnement solaire reçu sur Terre au cours de la
               journée. Double mode architectural : PWA 100% autonome sur smartphone avec base <strong>IndexedDB</strong>, ou station locale développeur avec base <strong>SQLite</strong>.
             </p>
           </div>
 
           {/* Quick Technical Status */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 text-xs font-mono text-slate-400 bg-slate-900/90 border border-slate-800 p-3 rounded-lg">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 text-xs font-mono text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 p-3 rounded-xl shadow-xs">
             <div className="flex items-center gap-2">
-              <Server className="w-4 h-4 text-emerald-400" />
+              <Server className="w-4 h-4 text-emerald-500" />
               <span>PWA Smartphone : IndexedDB</span>
             </div>
-            <span className="hidden sm:inline text-slate-700" aria-hidden="true">|</span>
+            <span className="hidden sm:inline text-slate-300 dark:text-slate-700" aria-hidden="true">|</span>
             <div className="flex items-center gap-2">
-              <Database className="w-4 h-4 text-sky-400" />
+              <Database className="w-4 h-4 text-sky-500" />
               <span>Station Dev : SQLite (solar_earth.db)</span>
             </div>
           </div>
@@ -70,14 +70,14 @@ export const DashboardPage: React.FC = () => {
       <section aria-labelledby="modules-hub-heading" className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 id="modules-hub-heading" className="text-lg font-bold text-slate-100 tracking-tight">
+            <h2 id="modules-hub-heading" className="text-lg font-bold text-slate-900 dark:text-slate-100 tracking-tight">
               Modules Scientifiques Opérationnels
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Outils d&apos;exploration, simulation et validation du rayonnement solaire
             </p>
           </div>
-          <span className="text-xs font-mono text-emerald-400">5 Modules Actifs</span>
+          <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-bold">5 Modules Actifs</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 font-mono text-xs">

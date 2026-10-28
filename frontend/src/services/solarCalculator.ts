@@ -356,11 +356,11 @@ export function generateScientificProvenance(
   peakGhi: number,
   peakDni: number,
   sunshineHours: number,
-  sourceId: 'pvgis_jrc_sarah2' | 'simulated_clearsky_model' = 'simulated_clearsky_model',
+  sourceId: string = 'simulated_clearsky_model',
   integrationMethod: 'hourly_mean_integration' | 'trapezoidal_integration' = 'hourly_mean_integration'
 ): ScientificProvenance {
   const nowUtc = new Date().toISOString();
-  const isPvgis = sourceId === 'pvgis_jrc_sarah2';
+  const isPvgis = sourceId.startsWith('pvgis');
 
   // Compute eccentricity factor for provenance
   const parts = dateStr.split('-').map(Number);

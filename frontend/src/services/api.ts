@@ -185,7 +185,9 @@ export async function fetchHourlyRadiation(
     const data: HourlyRadiationResponse = await res.json();
 
     const isSimulated = Boolean(data.is_simulated || data.source?.includes('simulated'));
-    const effectiveSource = isSimulated ? 'simulated_clearsky_model' : 'pvgis_jrc_sarah2';
+    const effectiveSource = isSimulated
+      ? 'simulated_clearsky_model'
+      : (data.provenance?.source_id || data.source || 'pvgis_jrc');
 
     const provenance =
       data.provenance ||
@@ -202,7 +204,7 @@ export async function fetchHourlyRadiation(
 
     const result: HourlyRadiationResponse = {
       ...data,
-      source: data.source || (isSimulated ? 'simulated_clearsky_spencer_bird' : 'pvgis_jrc_sarah2'),
+      source: data.source || effectiveSource,
       is_simulated: isSimulated,
       location_name: locationName || data.location_name || `${normLat}°, ${normLon}°`,
       cached: false,
@@ -212,7 +214,7 @@ export async function fetchHourlyRadiation(
         data.product_name ||
         (isSimulated
           ? 'Modèle Solaire Ciel Clair (Simulation Locale - Hors-Ligne)'
-          : 'PVGIS-SARAH2 / JRC European Commission'),
+          : 'PVGIS (Commission Européenne JRC)'),
       product_version: data.product_version || (isSimulated ? 'v2.0 (Spencer / Bird)' : 'v5.3'),
       warning:
         data.warning ||

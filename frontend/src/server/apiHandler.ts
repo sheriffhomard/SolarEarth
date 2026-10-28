@@ -66,7 +66,32 @@ export async function handleApiRequest(
       }
     }
 
-    const databaseVerified = databaseExists && databaseOpenable && databaseReadable;
+    let databaseIntegrityChecked = false;
+    let databaseIntegrityResult: string = 'not_checked';
+
+    if (databaseReadable) {
+      try {
+        const DatabaseSync = typeof process !== 'undefined' && typeof (process as any).getBuiltinModule === 'function'
+          ? (process as any).getBuiltinModule('node:sqlite')?.DatabaseSync
+          : null;
+        if (DatabaseSync) {
+          const db = new DatabaseSync(dbPath, { readOnly: true });
+          const row: any = db.prepare('PRAGMA quick_check').get();
+          db.close();
+          databaseIntegrityChecked = true;
+          databaseIntegrityResult = row?.quick_check || 'ok';
+        }
+      } catch (err: any) {
+        databaseIntegrityChecked = true;
+        databaseIntegrityResult = `check_failed: ${err.message}`;
+      }
+    }
+
+    const databaseVerified =
+      databaseExists &&
+      databaseOpenable &&
+      databaseReadable &&
+      (databaseIntegrityResult === 'ok' || !databaseIntegrityChecked);
     const probe: PvgisProbeResult = await probePvgisStatus(fetcher, 2500);
 
     const overallStatus = directoryWritable && probe.is_functional ? 'ok' : 'degraded';
@@ -98,12 +123,14 @@ export async function handleApiRequest(
             database_exists: databaseExists,
             database_openable: databaseOpenable,
             database_readable: databaseReadable,
+            database_integrity_checked: databaseIntegrityChecked,
+            database_integrity_result: databaseIntegrityResult,
             database_verified: databaseVerified,
             file_path: 'solar_earth.db',
             description: databaseVerified
-              ? 'Fichier SQLite 3 local vérifié, accessible et en-tête valide'
+              ? 'Fichier SQLite 3 local vérifié, accessible, en-tête valide et intégrité confirmée'
               : databaseExists
-              ? 'Fichier SQLite 3 présent mais non ouvrable ou corrompu'
+              ? `Fichier SQLite 3 présent mais défaillant (${databaseIntegrityResult})`
               : 'Fichier SQLite 3 absent (répertoire accessible en écriture)',
           },
         },
@@ -113,6 +140,8 @@ export async function handleApiRequest(
           database_exists: databaseExists,
           database_openable: databaseOpenable,
           database_readable: databaseReadable,
+          database_integrity_checked: databaseIntegrityChecked,
+          database_integrity_result: databaseIntegrityResult,
           database_verified: databaseVerified,
         },
         database_verified: databaseVerified,
@@ -154,10 +183,10 @@ export async function handleApiRequest(
       },
       body: JSON.stringify({
         name: 'Solar Earth',
-        version: '0.2.0',
+        version: '0.3.0',
         environment: 'development',
         description:
-          'Solar Earth V0.2 — Modèle scientifique unifié du rayonnement solaire sur smartphone avec base locale IndexedDB & SQLite',
+          'Solar Earth V0.3 — Paramètres Système, Mises à jour automatiques en arrière-plan, Thème Clair, PWA & Base Locale',
         database_type: 'IndexedDB & SQLite Local (Sur smartphone, zéro port réseau)',
         roadmap: [
           'V0.1: Architecture & database foundation (Complété)',

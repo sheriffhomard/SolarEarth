@@ -1,59 +1,80 @@
 import React from 'react';
-import { Sun, Menu, X } from 'lucide-react';
-import { PWAInstallPrompt } from '../common/PWAInstallPrompt';
+import { Sun, Moon, Menu, X, HelpCircle, Sparkles } from 'lucide-react';
+import { SolarLogo } from '../common/SolarLogo';
+import { PWAInstallButton } from '../common/PWAInstallButton';
+import { useTheme } from '../../context/ThemeContext';
 
 interface NavbarProps {
   onToggleMobileMenu: () => void;
   isMobileMenuOpen: boolean;
   serviceStatus: string;
+  onOpenOnboarding?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onToggleMobileMenu,
   isMobileMenuOpen,
   serviceStatus,
+  onOpenOnboarding,
 }) => {
+  const { resolvedTheme, toggleTheme } = useTheme();
+
   return (
-    <header className="sticky top-0 z-40 w-full bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
+    <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand */}
+        {/* Brand Logo & Title */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 text-slate-950 shadow-sm shadow-amber-500/20">
-            <Sun className="w-5 h-5 animate-[spin_60s_linear_infinite]" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold tracking-tight text-slate-100 text-base">SOLAR EARTH</span>
-              <span className="font-mono text-[10px] text-amber-400 bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-800/40">
-                V0.2
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">
-              Mesure & visualisation du rayonnement solaire sur Terre
-            </p>
-          </div>
+          <SolarLogo size="md" showText={true} version="V0.3" />
         </div>
 
-        {/* Status & Actions */}
-        <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-2 text-xs font-mono text-slate-400">
+        {/* Status, Theme Switcher, Install & Actions */}
+        <div className="flex items-center gap-2.5 sm:gap-4">
+          {/* Status info */}
+          <div className="hidden lg:flex items-center gap-2 text-xs font-mono text-slate-500 dark:text-slate-400">
             <span
               className={`w-2 h-2 rounded-full ${
-                serviceStatus === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                serviceStatus === 'ok' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
               }`}
             />
-            <span className="text-slate-400">PWA : IndexedDB Local</span>
-            <span className="text-slate-600 hidden lg:inline" aria-hidden="true">·</span>
-            <span className="text-slate-400 hidden lg:inline">Station Dev : SQLite</span>
+            <span>PWA : IndexedDB Local</span>
+            <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>
+            <span>Station Dev : SQLite</span>
           </div>
 
-          <PWAInstallPrompt />
+          {/* Onboarding & Legal Disclaimer trigger button */}
+          {onOpenOnboarding && (
+            <button
+              onClick={onOpenOnboarding}
+              title="Afficher l'accueil, guide et mentions légales"
+              className="p-2 rounded-lg text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
+              aria-label="Guide et mentions légales"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Theme Switcher Toggle (Clair / Sombre) */}
+          <button
+            onClick={toggleTheme}
+            title={resolvedTheme === 'dark' ? 'Passer au thème Clair' : 'Passer au thème Sombre'}
+            className="p-2 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 transition-colors"
+            aria-label="Basculer le thème clair ou sombre"
+          >
+            {resolvedTheme === 'dark' ? (
+              <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
+            ) : (
+              <Moon className="w-4 h-4 text-slate-700 hover:-rotate-12 transition-transform" />
+            )}
+          </button>
+
+          {/* PWA Install Button */}
+          <PWAInstallButton variant="compact" />
 
           {/* Mobile menu toggle */}
           <button
             onClick={onToggleMobileMenu}
             aria-label={isMobileMenuOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
-            className="md:hidden p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            className="md:hidden p-2 rounded-lg text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
             {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>

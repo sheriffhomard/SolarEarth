@@ -340,9 +340,13 @@ class PVGISProvider(SolarDataProvider):
                     dni = min(gb_i / sin_elev, 1361.2)
                     dhi = gd_i
 
+                minute = int(time_raw[11:13]) if len(time_raw) >= 13 else 0
+
                 day_points.append({
                     "hour": hour,
-                    "time": f"{date_str}T{hour:02d}:00:00Z",
+                    "time": f"{date_str}T{hour:02d}:{minute:02d}:00Z",
+                    "source_time_raw": time_raw,
+                    "time_convention": "UTC nominal observation/scan timestamp; radiation values represent hourly integrated mean.",
                     "ghi": max(0.0, round(ghi, 1)),
                     "dni": max(0.0, round(dni, 1)),
                     "dhi": max(0.0, round(dhi, 1)),

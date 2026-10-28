@@ -66,11 +66,20 @@ export interface AtmosphericModelParameters {
 export interface HourlyRadiationPoint {
   hour: number;
   time: string;
+  source_time_raw?: string;
+  time_convention?: string;
   ghi: number;
   dni: number;
   dhi: number;
+  raw_horizontal_beam_gbi?: number;
+  raw_diffuse_horizontal_gdi?: number;
+  raw_reflected_horizontal_gri?: number;
   solar_elevation: number;
+  apparent_solar_elevation_deg?: number;
   solar_azimuth?: number | null;
+  dni_derivation_method?: string;
+  is_derived_dni?: boolean;
+  derivation_note?: string;
   temperature?: number | null;
   ambient_temperature_proxy_c?: number;
   temperature_source?: 'era5_reanalysis' | 'theoretical_proxy' | 'ground_station' | string;
@@ -96,7 +105,10 @@ export interface ScientificProvenance {
   source_id: string;
   source_name: string;
   source_version: string;
-  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year' | string;
+  data_type?: 'historical_satellite' | 'simulated_clearsky' | 'typical_meteorological_year' | 'reanalysis' | string;
+  radiation_source_db?: string;
+  temperature_source_db?: string;
+  is_unrecognized_product?: boolean;
   data_retrieval_date_utc: string;
   calculation_date_utc: string;
   spatial_resolution: string;

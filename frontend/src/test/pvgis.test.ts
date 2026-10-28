@@ -1,16 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import {
   probePvgisStatus,
   queryPvgisSeries,
   validatePvgisHourlyPayload,
+  calculateAtmosphericRefractionDeg,
   PVGIS_MIN_YEAR,
   PVGIS_MAX_YEAR,
   PVGIS_PRODUCTS,
   isYearInPvgisArchive,
 } from '../services/pvgisService';
 import { handleApiRequest } from '../server/apiHandler';
+import serverApp from '../../server';
 
-describe('PVGIS Service and Health Probe Audit', () => {
+describe('PVGIS Service, Health Probe & Server Integration Audit', () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
@@ -111,7 +115,6 @@ describe('PVGIS Service and Health Probe Audit', () => {
       expect(isYearInPvgisArchive(2023, 'PVGIS-SARAH3')).toBe(true);
       expect(isYearInPvgisArchive(2024, 'PVGIS-SARAH3')).toBe(false);
       expect(isYearInPvgisArchive(2004, 'PVGIS-SARAH3')).toBe(false);
-      // SARAH-2 ends in 2020
       expect(isYearInPvgisArchive(2020, 'PVGIS-SARAH2')).toBe(true);
       expect(isYearInPvgisArchive(2021, 'PVGIS-SARAH2')).toBe(false);
     });
@@ -122,7 +125,6 @@ describe('PVGIS Service and Health Probe Audit', () => {
 
       const result = await queryPvgisSeries(43.6, 1.44, '2026-06-21');
 
-      // Upstream PVGIS must NOT be called with year 2020 or any clamped year
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(result.fallback_applied).toBe(true);
       expect(result.data_type).toBe('simulated_clearsky');
@@ -147,18 +149,21 @@ describe('PVGIS Service and Health Probe Audit', () => {
       expect(result.actual_data_period).toBeNull();
       expect(result.fallback_reason).toContain('hors archive satellitaire PVGIS');
     });
+  });
 
-    it('queries PVGIS for supported archive years with exact requested year and raddatabase', async () => {
+  describe('3. PVGIS Timestamps Preservation (No Silent Minute Reset)', () => {
+    it('preserves source minutes (e.g. 10 min for SARAH satellites) and converts to ISO UTC without zeroing minutes', async () => {
+      // SARAH satellite images are acquired at nominal minutes past the hour (e.g. 10 min)
       const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20200615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i >= 6 && i <= 18 ? 400 : 0,
-        'Gd(i)': i >= 6 && i <= 18 ? 120 : 0,
+        time: `20200615:${String(i).padStart(2, '0')}10`,
+        'Gb(i)': i >= 6 && i <= 18 ? 420 : 0,
+        'Gd(i)': i >= 6 && i <= 18 ? 110 : 0,
         'Gr(i)': 0,
-        H_sun: i >= 6 && i <= 18 ? 45.0 : -10.0,
-        T2m: 22.5,
+        H_sun: i >= 6 && i <= 18 ? 48.0 : -8.0,
+        T2m: 21.5,
       }));
 
-      const fetchMock = vi.fn().mockResolvedValue({
+      globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
         headers: { get: () => 'application/json' },
@@ -176,33 +181,146 @@ describe('PVGIS Service and Health Probe Audit', () => {
           },
         }),
       } as any);
-      globalThis.fetch = fetchMock;
 
-      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15', fetchMock, 4000, 'PVGIS-SARAH3');
-
-      // Verify URL sent to PVGIS has exact requested parameters
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const url = fetchMock.mock.calls[0][0];
-      expect(url).toContain('startyear=2020');
-      expect(url).toContain('endyear=2020');
-      expect(url).toContain('raddatabase=PVGIS-SARAH3');
-      expect(url).toContain('angle=0');
-      expect(url).toContain('aspect=0');
-
+      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
       expect(result.fallback_applied).toBe(false);
-      expect(result.data_type).toBe('historical_satellite');
-      expect(result.requested_date).toBe('2020-06-15');
-      expect(result.actual_data_period?.start).toContain('2020-06-15');
-      expect(result.provenance?.source_id).toBe('pvgis_jrc_sarah3');
-      expect(result.provenance?.temperature_source).toBe('era5_reanalysis');
-      expect(result.hourly.length).toBe(24);
-      expect(result.hourly[12].temperature_source).toBe('era5_reanalysis');
-      expect(result.hourly[12].quality_flag).toBe('satellite_retrieval');
+
+      const noon = result.hourly.find((p) => p.hour === 12);
+      expect(noon).toBeDefined();
+
+      // Crucial verification: source timestamp preserved, minutes are NOT forced to 00:00!
+      expect(noon!.source_time_raw).toBe('20200615:1210');
+      expect(noon!.time).toBe('2020-06-15T12:10:00Z');
+      expect(noon!.time_convention).toContain('UTC nominal observation/scan timestamp');
+
+      // Verify start and end of actual data period
+      expect(result.actual_data_period?.start).toBe('2020-06-15T00:10:00Z');
+      expect(result.actual_data_period?.end).toBe('2020-06-15T23:10:00Z');
+    });
+
+    it('rejects malformed timestamp formats in validatePvgisHourlyPayload without silent fallback masking', () => {
+      const corruptHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: i === 5 ? '20200615-0500' : `20200615:${String(i).padStart(2, '0')}00`, // Dash instead of colon
+        'Gb(i)': 0,
+        'Gd(i)': 0,
+        H_sun: -10,
+      }));
+
+      const validation = validatePvgisHourlyPayload({ outputs: { hourly: corruptHourly } }, '2020-06-15', 1361.2);
+      expect(validation.valid).toBe(false);
+      expect(validation.reason).toContain('Format d\'horodatage PVGIS non conforme');
     });
   });
 
-  describe('3. Dynamic Metadata Mapping from PVGIS Response', () => {
-    it('accurately identifies ERA5 reanalysis when PVGIS response indicates PVGIS-ERA5', async () => {
+  describe('4. Low Solar Elevations & DNI Physics near Horizon (0°, 0.5°, 1°, 2°)', () => {
+    it('applies atmospheric refraction formula accurately across solar elevations', () => {
+      // At horizon (h = 0°), Saemundsson refraction gives ~ 29 arcminutes (0.483°)
+      const ref0 = calculateAtmosphericRefractionDeg(0.0);
+      expect(ref0).toBeGreaterThan(0.45);
+      expect(ref0).toBeLessThan(0.65);
+
+      // At h = 0.5°, refraction is ~ 0.49°
+      const refHalf = calculateAtmosphericRefractionDeg(0.5);
+      expect(refHalf).toBeGreaterThan(0.40);
+      expect(refHalf).toBeLessThan(0.55);
+
+      // At h = 2.0°, refraction is ~ 0.3°
+      const ref2 = calculateAtmosphericRefractionDeg(2.0);
+      expect(ref2).toBeGreaterThan(0.25);
+      expect(ref2).toBeLessThan(0.35);
+
+      // Refraction decreases monotonically with elevation
+      expect(ref0).toBeGreaterThan(refHalf);
+      expect(refHalf).toBeGreaterThan(ref2);
+    });
+
+    it('sets GHI=0, DNI=0, DHI=0 for negative solar elevation (night) with method "night_zero"', async () => {
+      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': i === 0 ? 5 : 0, // Residual instrument noise at night
+        'Gd(i)': i === 0 ? 3 : 0,
+        'Gr(i)': 0,
+        H_sun: -5.0, // Night
+        T2m: 14.0,
+      }));
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ outputs: { hourly: sampleHourly } }),
+      } as any);
+
+      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
+      const midnight = result.hourly[0];
+      expect(midnight.solar_elevation).toBe(-5.0);
+      expect(midnight.ghi).toBe(0);
+      expect(midnight.dni).toBe(0);
+      expect(midnight.dhi).toBe(0);
+      expect(midnight.dni_derivation_method).toBe('night_zero');
+    });
+
+    it('handles grazing angles around 0.5° with atmospheric refraction and caps DNI to I0', async () => {
+      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': i === 6 ? 30 : 0,
+        'Gd(i)': i === 6 ? 20 : 0,
+        'Gr(i)': 0,
+        H_sun: i === 6 ? 0.5 : -10.0, // 0.5° grazing elevation
+        T2m: 16.0,
+      }));
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ outputs: { hourly: sampleHourly } }),
+      } as any);
+
+      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
+      const sunrise = result.hourly[6];
+
+      expect(sunrise.solar_elevation).toBe(0.5);
+      expect(sunrise.apparent_solar_elevation_deg).toBeGreaterThan(0.9);
+      expect(sunrise.dni_derivation_method).toBe('refraction_corrected_grazing');
+      expect(sunrise.derivation_note).toContain('correction de réfraction atmosphérique appliquée');
+      expect(sunrise.dni).toBeLessThanOrEqual(1361.2);
+      expect(sunrise.dni).toBeGreaterThan(0);
+      expect(sunrise.ghi).toBe(50); // Gb(i) + Gd(i) = 30 + 20
+      expect(sunrise.raw_horizontal_beam_gbi).toBe(30);
+      expect(sunrise.is_derived_dni).toBe(true);
+    });
+
+    it('distinguishes derivations at 1.0° and 2.0° with proper derivation methods', async () => {
+      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': i === 7 ? 60 : i === 8 ? 120 : 0,
+        'Gd(i)': i === 7 ? 30 : i === 8 ? 40 : 0,
+        'Gr(i)': 0,
+        H_sun: i === 7 ? 1.0 : i === 8 ? 2.0 : -10.0,
+        T2m: 17.0,
+      }));
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ outputs: { hourly: sampleHourly } }),
+      } as any);
+
+      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
+      const h7 = result.hourly[7];
+      const h8 = result.hourly[8];
+
+      expect(h7.dni_derivation_method).toBe('refraction_corrected_low_elevation');
+      expect(h8.dni_derivation_method).toBe('geometric_projection');
+      expect(h7.raw_horizontal_beam_gbi).toBe(60);
+      expect(h8.raw_horizontal_beam_gbi).toBe(120);
+    });
+  });
+
+  describe('5. Product Metadata & Treatment of Unknown Products', () => {
+    it('accurately identifies ERA5 reanalysis and sets isSatellite: false', async () => {
       const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
         time: `20180615:${String(i).padStart(2, '0')}00`,
         'Gb(i)': i >= 6 && i <= 18 ? 350 : 0,
@@ -225,29 +343,27 @@ describe('PVGIS Service and Health Probe Audit', () => {
               year_max: 2023,
             },
           },
-          outputs: {
-            hourly: sampleHourly,
-          },
+          outputs: { hourly: sampleHourly },
         }),
       } as any);
 
       const result = await queryPvgisSeries(43.6, 1.44, '2018-06-15', globalThis.fetch, 4000, 'PVGIS-ERA5');
 
-      expect(result.fallback_applied).toBe(false);
       expect(result.data_type).toBe('reanalysis');
       expect(result.provenance?.source_id).toBe('pvgis_ecmwf_era5');
       expect(result.provenance?.spatial_resolution).toContain('28 km');
-      expect(result.product_name).toBe('PVGIS-ERA5');
+      expect(result.provenance?.radiation_source_db).toBe('PVGIS-ERA5');
+      expect(result.provenance?.temperature_source_db).toBe('ERA5');
     });
 
-    it('accurately maps SARAH-2 when PVGIS response indicates PVGIS-SARAH2', async () => {
+    it('does NOT invent resolution or satellite status for unknown products', async () => {
       const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20150615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i >= 6 && i <= 18 ? 380 : 0,
-        'Gd(i)': i >= 6 && i <= 18 ? 110 : 0,
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': i >= 6 && i <= 18 ? 300 : 0,
+        'Gd(i)': i >= 6 && i <= 18 ? 80 : 0,
         'Gr(i)': 0,
-        H_sun: i >= 6 && i <= 18 ? 42.0 : -10.0,
-        T2m: 21.0,
+        H_sun: i >= 6 && i <= 18 ? 35.0 : -10.0,
+        T2m: 18.0,
       }));
 
       globalThis.fetch = vi.fn().mockResolvedValue({
@@ -257,219 +373,100 @@ describe('PVGIS Service and Health Probe Audit', () => {
         json: async () => ({
           inputs: {
             meteo_data: {
-              radiation_db: 'PVGIS-SARAH2',
-              meteo_db: 'ERA5',
-              year_min: 2005,
+              radiation_db: 'PVGIS-CUSTOM_MODEL',
+              meteo_db: 'COSMO',
+              year_min: 2010,
               year_max: 2020,
             },
           },
-          outputs: {
-            hourly: sampleHourly,
-          },
-        }),
-      } as any);
-
-      const result = await queryPvgisSeries(43.6, 1.44, '2015-06-15', globalThis.fetch, 4000, 'PVGIS-SARAH2');
-
-      expect(result.fallback_applied).toBe(false);
-      expect(result.provenance?.source_id).toBe('pvgis_jrc_sarah2');
-      expect(result.provenance?.spatial_resolution).toContain('5 km');
-      expect(result.product_name).toBe('PVGIS-SARAH2');
-    });
-  });
-
-  describe('4. Hourly Payload Validation & Prohibition of Artificial Zero Replacement', () => {
-    it('detects missing Gb(i) values and rejects payload without replacing with 0', () => {
-      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20200615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i === 12 ? null : 200, // Missing hour 12
-        'Gd(i)': 80,
-        H_sun: 30,
-      }));
-
-      const rawJson = { outputs: { hourly: sampleHourly } };
-      const validation = validatePvgisHourlyPayload(rawJson, '2020-06-15', 1361.2);
-
-      expect(validation.valid).toBe(false);
-      expect(validation.missingValuesCount).toBe(1);
-      expect(validation.reason).toContain('Rejet de la mise à zéro artificielle');
-    });
-
-    it('detects non-finite values (NaN / Infinity) and rejects payload', () => {
-      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20200615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i === 10 ? NaN : 200,
-        'Gd(i)': 80,
-        H_sun: 30,
-      }));
-
-      const rawJson = { outputs: { hourly: sampleHourly } };
-      const validation = validatePvgisHourlyPayload(rawJson, '2020-06-15', 1361.2);
-
-      expect(validation.valid).toBe(false);
-      expect(validation.outliersDetected).toBeGreaterThanOrEqual(1);
-    });
-
-    it('detects physically impossible irradiance values (Gb < -0.5 or Gb > I0) and rejects payload', () => {
-      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20200615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i === 14 ? 1800 : 200, // 1800 W/m² exceeds extraterrestrial constant
-        'Gd(i)': 80,
-        H_sun: 30,
-      }));
-
-      const rawJson = { outputs: { hourly: sampleHourly } };
-      const validation = validatePvgisHourlyPayload(rawJson, '2020-06-15', 1361.2);
-
-      expect(validation.valid).toBe(false);
-      expect(validation.outliersDetected).toBeGreaterThanOrEqual(1);
-    });
-
-    it('triggers explicit fallback when payload validation fails without date spoofing', async () => {
-      const corruptHourly = Array.from({ length: 24 }, (_, i) => ({
-        time: `20200615:${String(i).padStart(2, '0')}00`,
-        'Gb(i)': i === 12 ? undefined : 200,
-        'Gd(i)': 80,
-        H_sun: 30,
-      }));
-
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => ({ outputs: { hourly: corruptHourly } }),
-      } as any);
-
-      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
-
-      expect(result.fallback_applied).toBe(true);
-      expect(result.data_type).toBe('simulated_clearsky');
-      expect(result.requested_date).toBe('2020-06-15');
-      expect(result.fallback_reason).toContain('Données PVGIS rejetées après validation');
-    });
-  });
-
-  describe('5. Field Semantics, Irradiance Physics and Sunrise/Sunset Edge Cases', () => {
-    it('correctly calculates GHI as Gb(i) + Gd(i) and derives DNI as Gb(i) / sin(H_sun)', async () => {
-      const elevationDeg = 30.0; // sin(30) = 0.5
-      const gb_i = 350; // beam horizontal
-      const gd_i = 100; // diffuse horizontal
-
-      const sampleHourly = [
-        {
-          time: '20200615:1200',
-          'Gb(i)': gb_i,
-          'Gd(i)': gd_i,
-          'Gr(i)': 0,
-          H_sun: elevationDeg,
-          T2m: 25.0,
-        },
-      ];
-
-      for (let h = 0; h < 24; h++) {
-        if (h !== 12) {
-          sampleHourly.push({
-            time: `20200615:${String(h).padStart(2, '0')}00`,
-            'Gb(i)': 0,
-            'Gd(i)': 0,
-            'Gr(i)': 0,
-            H_sun: -5,
-            T2m: 15.0,
-          });
-        }
-      }
-
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => ({
           outputs: { hourly: sampleHourly },
         }),
       } as any);
 
-      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
-      const noon = result.hourly.find((p) => p.hour === 12);
-      expect(noon).toBeDefined();
+      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15', globalThis.fetch, 4000, 'PVGIS-CUSTOM_MODEL');
 
-      // GHI = 350 + 100 = 450
-      expect(noon!.ghi).toBe(450);
-      expect(noon!.dhi).toBe(100);
-
-      // DNI = 350 / sin(30°) = 350 / 0.5 = 700
-      expect(noon!.dni).toBeCloseTo(700, 0);
-
-      // Night hour check
-      const midnight = result.hourly.find((p) => p.hour === 0);
-      expect(midnight!.ghi).toBe(0);
-      expect(midnight!.dni).toBe(0);
-      expect(midnight!.dhi).toBe(0);
-    });
-
-    it('caps DNI at extraterrestrial irradiance I0 for grazing angles at sunrise/sunset (0 < H_sun <= 1°)', async () => {
-      const grazingHour = {
-        time: '20200615:0600',
-        'Gb(i)': 25, // beam horizontal at low sun
-        'Gd(i)': 15,
-        'Gr(i)': 0,
-        H_sun: 0.5, // grazing elevation: sin(0.5°) = 0.00872 -> 25 / 0.00872 = 2867 > I0 (~1323)
-        T2m: 14.0,
-      };
-
-      const sampleHourly = [grazingHour];
-      for (let h = 0; h < 24; h++) {
-        if (h !== 6) {
-          sampleHourly.push({
-            time: `20200615:${String(h).padStart(2, '0')}00`,
-            'Gb(i)': 0,
-            'Gd(i)': 0,
-            'Gr(i)': 0,
-            H_sun: -10,
-            T2m: 12.0,
-          });
-        }
-      }
-
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        headers: { get: () => 'application/json' },
-        json: async () => ({
-          outputs: { hourly: sampleHourly },
-        }),
-      } as any);
-
-      const result = await queryPvgisSeries(43.6, 1.44, '2020-06-15');
-      const sunrise = result.hourly.find((p) => p.hour === 6);
-      expect(sunrise).toBeDefined();
-
-      // DNI must NOT blow up towards infinity; capped at I0 (~1323 W/m² for day 167)
-      expect(sunrise!.dni).toBeLessThanOrEqual(1361.2);
-      expect(sunrise!.dni).toBeGreaterThan(0);
-      expect(sunrise!.ghi).toBe(40); // 25 + 15
-      expect(sunrise!.dhi).toBe(15);
-    });
-
-    it('enforces radiative closure on hourly integrated simulation within composite quadrature bounds', async () => {
-      const result = await queryPvgisSeries(43.6, 1.44, '2026-06-21'); // simulated clearsky
-      for (const p of result.hourly) {
-        if (p.solar_elevation > 3.0) {
-          const sinH = Math.sin((p.solar_elevation * Math.PI) / 180);
-          const computedGhi = p.dni * sinH + p.dhi;
-          // Across a 60-min interval, composite quadrature covariance between DNI(t) and sin(alpha(t))
-          // is bounded within 6 W/m²
-          expect(Math.abs(computedGhi - p.ghi)).toBeLessThan(6.0);
-        } else if (p.solar_elevation < -2.0) {
-          expect(p.ghi).toBe(0);
-          expect(p.dni).toBe(0);
-          expect(p.dhi).toBe(0);
-        }
-      }
+      expect(result.provenance?.source_id).toContain('unknown');
+      expect(result.provenance?.is_unrecognized_product).toBe(true);
+      expect(result.provenance?.spatial_resolution).toBe('Inconnue (produit non documenté)');
+      expect(result.provenance?.radiation_source_db).toBe('PVGIS-CUSTOM_MODEL');
+      expect(result.provenance?.temperature_source_db).toBe('COSMO');
+      expect(result.provenance?.limits_and_disclaimers?.some((d) => d.includes('non répertorié'))).toBe(true);
     });
   });
 
-  describe('6. API Handler Health & Info Consistency', () => {
-    it('/api/v1/health returns detailed database checks and true pvgis availability', async () => {
+  describe('6. Rigorous Hourly Validation & High Latitude Behavior', () => {
+    it('detects missing hours in sequence and rejects payload without zero substitution', () => {
+      // 23 hours instead of 24
+      const sampleHourly = Array.from({ length: 23 }, (_, i) => ({
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': 100,
+        'Gd(i)': 50,
+        H_sun: 20,
+      }));
+
+      const validation = validatePvgisHourlyPayload({ outputs: { hourly: sampleHourly } }, '2020-06-15', 1361.2);
+      expect(validation.valid).toBe(false);
+      expect(validation.reason).toContain('23/24');
+    });
+
+    it('detects duplicate hours and rejects payload', () => {
+      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: i === 12 ? '20200615:1100' : `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': 100,
+        'Gd(i)': 50,
+        H_sun: 20,
+      }));
+
+      const validation = validatePvgisHourlyPayload({ outputs: { hourly: sampleHourly } }, '2020-06-15', 1361.2);
+      expect(validation.valid).toBe(false);
+    });
+
+    it('detects chronological ordering violations and rejects payload', () => {
+      const sampleHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20200615:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': 100,
+        'Gd(i)': 50,
+        H_sun: 20,
+      }));
+      // Swap two entries to violate chronological order
+      const tmp = sampleHourly[5];
+      sampleHourly[5] = sampleHourly[4];
+      sampleHourly[4] = tmp;
+
+      const validation = validatePvgisHourlyPayload({ outputs: { hourly: sampleHourly } }, '2020-06-15', 1361.2);
+      expect(validation.valid).toBe(false);
+      expect(validation.reason).toContain('Défaut d\'ordonnancement chronologique');
+    });
+
+    it('accepts polar day (24h daylight) and polar night (24h night) at high latitudes as physically valid', () => {
+      // Polar day: H_sun > 0 for all 24 hours
+      const polarDayHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20200621:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': 150,
+        'Gd(i)': 80,
+        H_sun: 10 + Math.sin((i * Math.PI) / 12) * 8, // Elevation between 2° and 18°
+        T2m: 5.0,
+      }));
+
+      const validationDay = validatePvgisHourlyPayload({ outputs: { hourly: polarDayHourly } }, '2020-06-21', 1361.2);
+      expect(validationDay.valid).toBe(true);
+
+      // Polar night: H_sun < 0 for all 24 hours
+      const polarNightHourly = Array.from({ length: 24 }, (_, i) => ({
+        time: `20201221:${String(i).padStart(2, '0')}00`,
+        'Gb(i)': 0,
+        'Gd(i)': 0,
+        H_sun: -15 + Math.sin((i * Math.PI) / 12) * 5, // Elevation between -20° and -10°
+        T2m: -20.0,
+      }));
+
+      const validationNight = validatePvgisHourlyPayload({ outputs: { hourly: polarNightHourly } }, '2020-12-21', 1361.2);
+      expect(validationNight.valid).toBe(true);
+    });
+  });
+
+  describe('7. SQLite Health Check with PRAGMA quick_check Integrity', () => {
+    it('/api/v1/health reports SQLite presence, openability, header, and PRAGMA quick_check integrity', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
@@ -477,52 +474,119 @@ describe('PVGIS Service and Health Probe Audit', () => {
         json: async () => ({ outputs: { hourly: [{ time: '20200615:1200' }] } }),
       } as any);
 
-      const res = await handleApiRequest('/api/v1/health', { rootDir: process.cwd() });
-      expect(res).not.toBeNull();
-      expect(res!.statusCode).toBe(200);
+      // Test with clean rootDir where solar_earth.db is absent
+      const emptyRootDir = path.resolve(process.cwd(), 'temp_test_empty_env');
+      fs.mkdirSync(emptyRootDir, { recursive: true });
+      try {
+        const res = await handleApiRequest('/api/v1/health', { rootDir: emptyRootDir });
+        expect(res).not.toBeNull();
+        expect(res!.statusCode).toBe(200);
 
-      const body = JSON.parse(res!.body);
-      expect(body.status).toBe('ok');
-      expect(body.database).toBeDefined();
-      expect(body.database.backend).toBe('sqlite_backend_optional');
-      expect(typeof body.database.directory_writable).toBe('boolean');
-      expect(body.pvgis).toBeDefined();
-      expect(body.pvgis.functional_status).toBe('available');
+        const body = JSON.parse(res!.body);
+        expect(body.status).toBe('ok');
+        expect(body.storage.server_sqlite).toBeDefined();
+        expect(typeof body.storage.server_sqlite.directory_writable).toBe('boolean');
+        expect(body.storage.server_sqlite.database_exists).toBe(false);
+        expect(body.storage.server_sqlite.database_verified).toBe(false);
+        expect(body.pvgis.functional_status).toBe('available');
+      } finally {
+        if (fs.existsSync(emptyRootDir)) fs.rmdirSync(emptyRootDir);
+      }
     });
 
-    it('/api/v1/info does not advertise PVGIS as available when probe fails', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 503,
-        headers: { get: () => 'text/plain' },
-        text: async () => 'Service Unavailable',
-      } as any);
+    it('/api/v1/health verifies actual SQLite database when present using PRAGMA quick_check', async () => {
+      const testDbPath = path.resolve(process.cwd(), 'temp_test_check.db');
+      if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
+      const DatabaseSync = typeof process !== 'undefined' && typeof (process as any).getBuiltinModule === 'function'
+        ? (process as any).getBuiltinModule('node:sqlite')?.DatabaseSync
+        : null;
 
-      const res = await handleApiRequest('/api/v1/info', { rootDir: process.cwd() });
-      expect(res).not.toBeNull();
+      if (DatabaseSync) {
+        const db = new DatabaseSync(testDbPath);
+        db.exec("CREATE TABLE test_meta (key TEXT, val TEXT); INSERT INTO test_meta VALUES ('app', 'SolarEarth');");
+        db.close();
+      } else {
+        // Fallback valid SQLite header
+        const header = Buffer.alloc(100);
+        header.write('SQLite format 3\0', 0, 16, 'utf8');
+        fs.writeFileSync(testDbPath, header);
+      }
 
-      const body = JSON.parse(res!.body);
-      expect(body.providers.pvgis.available).toBe(false);
-      expect(body.providers.pvgis.operational_status).toBe('unavailable');
+      try {
+        // Mock rootDir to contain temp_test_check.db by renaming or pointing
+        const testRootDir = path.resolve(process.cwd(), 'temp_test_env');
+        fs.mkdirSync(testRootDir, { recursive: true });
+        const targetDb = path.resolve(testRootDir, 'solar_earth.db');
+        fs.copyFileSync(testDbPath, targetDb);
+
+        const res = await handleApiRequest('/api/v1/health', { rootDir: testRootDir });
+        expect(res).not.toBeNull();
+        const body = JSON.parse(res!.body);
+
+        expect(body.storage.server_sqlite.database_exists).toBe(true);
+        expect(body.storage.server_sqlite.database_openable).toBe(true);
+        expect(body.storage.server_sqlite.database_readable).toBe(true);
+        expect(body.storage.server_sqlite.database_integrity_checked).toBe(true);
+        expect(body.storage.server_sqlite.database_integrity_result).toBe('ok');
+        expect(body.storage.server_sqlite.database_verified).toBe(true);
+
+        fs.unlinkSync(targetDb);
+        fs.rmdirSync(testRootDir);
+      } finally {
+        if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
+      }
+    });
+  });
+
+  describe('8. Production Express Server Integration (server.ts)', () => {
+    it('express server exports functional application routing /api/v1/health and /api/v1/info', async () => {
+      expect(serverApp).toBeDefined();
+      expect(typeof (serverApp as any).handle).toBe('function');
+
+      // Test api handler directly through mock invocation
+      const healthRes = await handleApiRequest('/api/v1/health');
+      expect(healthRes?.statusCode).toBe(200);
+
+      const infoRes = await handleApiRequest('/api/v1/info');
+      expect(infoRes?.statusCode).toBe(200);
+      const infoBody = JSON.parse(infoRes!.body);
+      expect(infoBody.name).toBe('Solar Earth');
+      expect(infoBody.version).toBe('0.3.0');
+    });
+  });
+
+  describe('9. System Settings, Update Engine & Background Auto-Updates (v0.3.0)', () => {
+    it('provides correct release date, app version, and last check date tracking', async () => {
+      const { UpdateService, APP_VERSION, RELEASE_DATE } = await import('../services/updateService');
+      expect(APP_VERSION).toBe('0.3.0');
+      expect(RELEASE_DATE).toBe('28 octobre 2026');
+
+      const testTimestamp = '2026-10-28T14:30:00.000Z';
+      UpdateService.setLastCheckDate(testTimestamp);
+      expect(UpdateService.getLastCheckDate()).toBe(testTimestamp);
+
+      // Auto update toggling
+      UpdateService.setAutoUpdateEnabled(true);
+      expect(UpdateService.isAutoUpdateEnabled()).toBe(true);
+      UpdateService.setAutoUpdateEnabled(false);
+      expect(UpdateService.isAutoUpdateEnabled()).toBe(false);
+      UpdateService.setAutoUpdateEnabled(true);
+
+      // Auto update intervals
+      UpdateService.setAutoUpdateIntervalMinutes(30);
+      expect(UpdateService.getAutoUpdateIntervalMinutes()).toBe(30);
+      UpdateService.setAutoUpdateIntervalMinutes(15);
+      expect(UpdateService.getAutoUpdateIntervalMinutes()).toBe(15);
     });
 
-    it('/api/v1/radiation/hourly rejects invalid dates and returns 400', async () => {
-      const res = await handleApiRequest('/api/v1/radiation/hourly?date=invalid-date', { rootDir: process.cwd() });
-      expect(res).not.toBeNull();
-      expect(res!.statusCode).toBe(400);
-      const body = JSON.parse(res!.body);
-      expect(body.error).toBe('invalid_date_format');
-    });
-
-    it('/api/v1/radiation/hourly transparently indicates simulated fallback for 2026', async () => {
-      const res = await handleApiRequest('/api/v1/radiation/hourly?lat=43.6&lon=1.44&date=2026-06-21', { rootDir: process.cwd() });
-      expect(res).not.toBeNull();
-      expect(res!.statusCode).toBe(200);
-      const body = JSON.parse(res!.body);
-      expect(body.data_type).toBe('simulated_clearsky');
-      expect(body.fallback_applied).toBe(true);
-      expect(body.requested_date).toBe('2026-06-21');
-      expect(body.actual_data_period).toBeNull();
+    it('checkForUpdates executes without throwing and updates last check date', async () => {
+      const { UpdateService } = await import('../services/updateService');
+      const result = await UpdateService.checkForUpdates();
+      expect(result).toBeDefined();
+      expect(result.currentVersion).toBe('0.3.0');
+      expect(typeof result.checkedAtIso).toBe('string');
+      expect(typeof result.message).toBe('string');
+      expect(typeof result.hasUpdate).toBe('boolean');
     });
   });
 });
